@@ -590,11 +590,10 @@ void GoSequencerEditor::timerCallback()
     {
         lastWaveReplayShown = waveReplay;
 
-        //  Wave Gap only means anything once Wave Replay is on; Loop is
-        //  ignored while it is, so grey that switch out too rather than let
-        //  it look like it still has a say
+        //  Wave Gap only means anything once Wave Replay is on. Loop still
+        //  does - it wraps the record without clearing the board, which is
+        //  what keeps the wave running - so that switch stays live.
         waveGapSlider.setEnabled (waveReplay);
-        loopGameButton.setEnabled (! waveReplay);
     }
 
     const int position = processor.gamePosition();

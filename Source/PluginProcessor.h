@@ -194,8 +194,16 @@ public:
     //  on that point has its lifespan reset, as if it had just been placed.
     //  Different moves are born on different ticks, so their resets land on
     //  different ticks too: the effect ripples across the board one stone at
-    //  a time rather than pulsing the whole board together. Loop is ignored
-    //  while this is on - the game plays once through and holds at the end.
+    //  a time rather than pulsing the whole board together.
+    //
+    //  Each echo level is a replay head: level k is the head that started k*gap
+    //  moves ago, and since the stone it would play is already standing, playing
+    //  it can only mean refreshing it. With Loop on the record wraps without
+    //  clearing the board, echo sources wrap with it (see gameWrapped), and the
+    //  wave keeps running until the transport stops rather than dying at the end
+    //  of the record. The board stops evolving once it is full - replayed moves
+    //  land on occupied points and become refreshes too - which is the point:
+    //  the finished shape is what ripples.
     //
     //  Stone Life is kept below Wave Gap (see clampStoneLifeToWaveGap()): a
     //  stone that could outlive a whole gap on its own would make its reset
@@ -265,8 +273,16 @@ private:
 
     //  these expect boardLock to be held
     void resetGameLocked();
-    bool advanceGameLocked();
+    /** Wave Replay's loop: sends the record back to move 0 leaving the board
+        standing, so the stones the wave is still rippling survive the wrap. */
+    void wrapGameLocked();
+    /** Plays the move at the current position. refreshOccupied turns a move
+        onto a point that is already taken into a lifespan refresh rather than
+        a dropped move - what a replay head can mean once the board is full. */
+    bool advanceGameLocked (bool refreshOccupied);
     void rebuildBoardFromGameLocked (int position);
+    /** Deals idx a fresh lifespan, as if a stone had just landed on it. */
+    void refreshStoneLifeLocked (int idx);
     /** Wave Replay: after movesPlaced (gameMovePosition, just advanced past
         the move that landed on this tick) has been reached, refreshes every
         point still echoing an earlier move - see the class doc above. */
@@ -284,6 +300,10 @@ private:
     sgf::Game game;
     juce::String sgfText, sourceName;
     int gameMovePosition = 0;                      // guarded by boardLock
+    //  set once the record has wrapped at least once under Wave Replay, so echo
+    //  sources may reach back past move 1 into the tail of the record - before
+    //  that there is no earlier pass for them to find. Cleared by any rebuild.
+    bool gameWrapped = false;                      // guarded by boardLock
 
     std::array<std::atomic<std::uint8_t>, go::maxCells> stones {};
     std::atomic<int> prisonersBlack { 0 }, prisonersWhite { 0 }, lastMoveIndex { -1 };

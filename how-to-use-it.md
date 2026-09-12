@@ -243,7 +243,7 @@ different ticks, their resets land on different ticks too — the effect
 ripples across the board one stone at a time rather than the whole board
 flashing back to life together.
 
-Two things follow from that:
+Three things follow from that:
 
 - **Stone Life is kept below Wave Gap.** If a stone could already outlive
   a whole Wave Gap on its own, its reset would be a no-op — the wave
@@ -251,11 +251,25 @@ Two things follow from that:
   past **Wave Gap − 1** pulls it back down automatically, and **Wave Gap**
   can't go below 2 (Stone Life's own minimum is 1, so it always needs
   room underneath).
-- **Loop is ignored** while Wave Replay is on — the record plays through
-  once and holds at the end, the same way ordinary replay holds when Loop
-  is off. Wave Replay's resets are keyed to a move's own position in the
-  record, so restarting the record from move 0 mid-stream would scramble
-  which move a given reset is echoing.
+- **Loop wraps the record without clearing the board.** Each refresh level
+  is really a replay head: level *k* is the head that set off *k* × Wave
+  Gap moves ago, and since the stone it would play is already standing,
+  playing it can only mean refreshing it. Wiping the board at the loop
+  point would cut all sixteen of those heads off at once, so with Wave
+  Replay on the wrap leaves the stones where they are and the refresh
+  levels wrap with the record — at move 1 of a new pass, level 1 reaches
+  back into the tail of the previous one. The wave runs unbroken until you
+  stop the transport.
+
+  Two side effects worth knowing. The record's own head starts landing on
+  points it already owns, and those moves become refreshes too rather than
+  placements. And because captured stones *are* lifted, those points get
+  genuinely replayed next pass — so the board keeps some churn for a while,
+  then settles. Once it's full you're hearing the finished shape ripple
+  rather than a game replaying, which is the point of leaving it standing.
+
+With Wave Replay **off**, Loop behaves as it always has: the board is wiped
+and the record replays from move 0.
 
 ## 7. Playhead modes explained in depth
 

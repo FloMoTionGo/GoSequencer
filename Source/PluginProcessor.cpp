@@ -674,6 +674,15 @@ void GoSequencerProcessor::resetGameLocked()
     rebuildBoardFromGameLocked (0);
 }
 
+void GoSequencerProcessor::wrapGameLocked()
+{
+    //  deliberately not a rebuild: the board stays exactly as the record left
+    //  it, so the stones the wave is still rippling are there to be refreshed
+    //  on the other side of the wrap
+    gameMovePosition = 0;
+    gameWrapped = true;
+}
+
 void GoSequencerProcessor::rebuildBoardFromGameLocked (int position)
 {
     board.clear();
@@ -693,9 +702,10 @@ void GoSequencerProcessor::rebuildBoardFromGameLocked (int position)
 
     board.resetCaptureCounts();
     gameMovePosition = limit;
+    gameWrapped = false;        //  a fresh board has no earlier pass behind it
 }
 
-bool GoSequencerProcessor::advanceGameLocked()
+bool GoSequencerProcessor::advanceGameLocked (bool refreshOccupied)
 {
     if (gameMovePosition >= (int) game.moves.size())
         return false;
@@ -703,10 +713,22 @@ bool GoSequencerProcessor::advanceGameLocked()
     const auto& move = game.moves[(size_t) gameMovePosition];
 
     if (! move.isPass)
-        board.play (move.index, move.colour, true, false);   //  records are trusted: no ko test
+    {
+        if (refreshOccupied && board.at (move.index) != go::Stone::none)
+            refreshStoneLifeLocked (move.index);    //  a head replaying a point it already owns
+        else
+            board.play (move.index, move.colour, true, false);   //  records are trusted: no ko test
+    }
 
     ++gameMovePosition;
     return true;
+}
+
+void GoSequencerProcessor::refreshStoneLifeLocked (int idx)
+{
+    bornAt[(size_t) idx].store (ageClock.load (std::memory_order_relaxed), std::memory_order_relaxed);
+    placedAt[(size_t) idx].store (placeCounter.fetch_add (1, std::memory_order_relaxed) + 1,
+                                  std::memory_order_relaxed);
 }
 
 void GoSequencerProcessor::applyWaveEchoesLocked (int movesPlaced)
@@ -715,30 +737,40 @@ void GoSequencerProcessor::applyWaveEchoesLocked (int movesPlaced)
         return;
 
     const int gap = waveGapParam->get();
+    const int total = (int) game.moves.size();
 
-    if (gap < 1)
+    if (gap < 1 || total < 1)
         return;
-
-    const long long now = ageClock.load (std::memory_order_relaxed);
 
     //  echo k reaches, on this move, the point that move (movesPlaced - k*gap)
     //  touched when IT landed. Different moves were born on different ticks,
     //  so each echo level lands on a different move - never all at once.
     for (int k = 1; k <= maxWaveEchoes; ++k)
     {
-        const int sourceMove = movesPlaced - k * gap;
+        int sourceMove = movesPlaced - k * gap;
 
         if (sourceMove < 1)
-            break;
+        {
+            //  before the first wrap there is no earlier pass to reach into, so
+            //  the wave is only as deep as the record is long so far. After one,
+            //  the heads run off the front of the record into its tail, which is
+            //  still standing on the board - that is what keeps the wave whole
+            //  across the loop instead of thinning out and rebuilding.
+            if (! gameWrapped)
+                break;
+
+            sourceMove = ((sourceMove - 1) % total + total) % total + 1;   //  into 1..total
+        }
+
+        if (sourceMove == movesPlaced)
+            continue;                   //  a head that has lapped onto this very move
 
         const auto& mv = game.moves[(size_t) (sourceMove - 1)];
 
         if (mv.isPass || board.at (mv.index) == go::Stone::none)
             continue;
 
-        bornAt[(size_t) mv.index].store (now, std::memory_order_relaxed);
-        placedAt[(size_t) mv.index].store (placeCounter.fetch_add (1, std::memory_order_relaxed) + 1,
-                                           std::memory_order_relaxed);
+        refreshStoneLifeLocked (mv.index);
     }
 }
 
@@ -1002,18 +1034,21 @@ void GoSequencerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
                 while (gameCountdown <= 0.0 && ++guard < 512)
                 {
-                    if (! advanceGameLocked())
+                    if (! advanceGameLocked (waveReplay))
                     {
-                        //  Wave Replay ignores Loop: its echoes are keyed to a
-                        //  move's own position in the record, so the game
-                        //  plays once through and holds at the end
-                        if (waveReplay || ! gameLoopParam->get())
+                        if (! gameLoopParam->get())
                         {
                             gameCountdown = samplesPerMove;     //  hold on the final position
                             break;
                         }
 
-                        resetGameLocked();
+                        //  Wave Replay wraps without clearing: the echo heads
+                        //  are mid-record all over the board, and wiping it
+                        //  would cut every one of them off at the loop point
+                        if (waveReplay)
+                            wrapGameLocked();
+                        else
+                            resetGameLocked();
                     }
                     else if (waveReplay)
                     {

@@ -109,7 +109,8 @@ real game onto the board:
 - **Wave Replay** is a second pacing option: playback never pauses, but
   every **Wave Gap** moves after a move first landed, whatever's currently
   on that point gets its own lifespan reset — staggered per stone rather
-  than a synchronized pulse. See
+  than a synchronized pulse. With **Loop** on, the record wraps without
+  clearing the board, so the wave keeps running until you stop. See
   [how-to-use-it.md](how-to-use-it.md#wave-replay) for the full mechanics.
 
 ## Using it in Ableton Live
