@@ -6,7 +6,7 @@ ring — and the sequencer turns their position, colour, and lifespan into
 notes. Load a real game record (SGF) and watch the pattern rewrite itself as
 the game unfolds.
 
-It's a [JUCE](https://juce.com/) plugin, built as **VST3** and **Standalone**,
+It's a [JUCE](https://juce.com/) plugin, built as a **VST3**,
 shaped as a MIDI instrument: it emits notes rather than making sound itself,
 so you route its MIDI output to a synth or sampler in your DAW.
 
@@ -152,7 +152,7 @@ git clone --depth 1 https://github.com/juce-framework/JUCE.git ..\.toolchains\JU
 ```
 
 [`build.ps1`](build.ps1) wraps the raw CMake calls below and prints the
-paths to the built VST3 and standalone app when it's done. Useful flags:
+path to the built VST3 when it's done. Useful flags:
 `-Config Debug`, `-Clean` (wipe `build/` first), `-Install` (copy the .vst3
 into `%CommonProgramFiles%\VST3` or `%LOCALAPPDATA%\Programs\Common\VST3`).
 
@@ -160,14 +160,13 @@ Equivalent by hand:
 
 ```powershell
 cmake -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --target GoSequencer_VST3 GoSequencer_Standalone
+cmake --build build --config Release --target GoSequencer_VST3
 ```
 
 Build output lands under `build/GoSequencer_artefacts/Release/`:
 
 - `VST3/Go Sequencer.vst3` — copy to `C:\Program Files\Common Files\VST3\`
   (or your DAW's VST3 folder) to make it visible to your host.
-- `Standalone/Go Sequencer.exe` — runs on its own, no host required.
 
 If your JUCE checkout lives somewhere else, point CMake at it instead of
 editing the source:
@@ -181,7 +180,7 @@ cmake -B build -DJUCE_PATH="C:\path\to\JUCE" -G "Visual Studio 17 2022" -A x64
 ```bash
 git clone --depth 1 https://github.com/juce-framework/JUCE.git ../.toolchains/JUCE
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target GoSequencer_VST3 GoSequencer_Standalone -j
+cmake --build build --target GoSequencer_VST3 -j
 ```
 
 On macOS the VST3 lands in `build/GoSequencer_artefacts/Release/VST3/`; copy

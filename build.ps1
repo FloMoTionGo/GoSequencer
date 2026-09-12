@@ -1,5 +1,5 @@
 <#
-    Builds Go Sequencer (VST3 + standalone) with MSVC.
+    Builds Go Sequencer (VST3) with MSVC.
 
         .\build.ps1                 # configure + build Release, run the rules tests
         .\build.ps1 -Install        # also copy the .vst3 into a VST3 folder
@@ -41,11 +41,9 @@ if (Test-Path $tests) {
 
 $artefacts = Join-Path $build "GoSequencer_artefacts\$Config"
 $vst3      = Join-Path $artefacts "VST3\Go Sequencer.vst3"
-$standalone = Join-Path $artefacts "Standalone\Go Sequencer.exe"
 
 Write-Host ""
 Write-Host "VST3:       $vst3"
-Write-Host "Standalone: $standalone"
 
 if ($Install) {
     $targets = @(

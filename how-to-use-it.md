@@ -42,11 +42,9 @@ deeper into *how* and *why* each feature behaves the way it does.
 
 ## 1. First launch
 
-Go Sequencer is a **MIDI instrument** plugin (VST3) and also builds as a
-**Standalone** app. It produces no audio of its own — it emits MIDI notes,
-so it needs either a host that routes those notes into a synth/sampler
-track, or (in Standalone mode) a MIDI output device / virtual MIDI port
-feeding something that makes sound.
+Go Sequencer is a **MIDI instrument** plugin (VST3). It produces no audio
+of its own — it emits MIDI notes, so it needs a host that routes those
+notes into a synth/sampler track feeding something that makes sound.
 
 When the window opens you'll see, top to bottom:
 
@@ -165,8 +163,8 @@ A stone you place is timestamped internally the moment it lands (see
   transport is actually playing; pressing stop halts the clock, sends
   all-notes-off, and resets every playhead back to its starting corner
   next time it runs. With Free run **on**, the clock runs continuously
-  regardless of the host transport — handy for the Standalone app, or for
-  auditioning the board without pressing play in your DAW.
+  regardless of the host transport — handy for auditioning the board
+  without pressing play in your DAW.
 - **Show path** — toggles a faint line on the board tracing each
   playhead's route (the spiral / ring / quadrant path it's following).
   Good for understanding a mode before you commit stones to it.
@@ -404,10 +402,6 @@ The same pattern (route one track's MIDI output into another track's
 input) works in Cubase, Studio One, Reaper, Bitwig, and most other hosts
 that support inter-track MIDI routing.
 
-**Standalone app:** select a MIDI output device (or a virtual MIDI port
-such as loopMIDI on Windows) in the app's audio/MIDI settings, and point
-whatever's listening on that port — hardware synth, another app — at it.
-
 ## 11. Saving and recalling sessions
 
 Every control here is a JUCE `AudioProcessorValueTreeState` parameter, so
@@ -454,7 +448,7 @@ Equivalent raw CMake, if you'd rather not use the script:
 
 ```powershell
 cmake -B build -G "Visual Studio 17 2022" -A x64
-cmake --build build --config Release --target GoSequencer_VST3 GoSequencer_Standalone
+cmake --build build --config Release --target GoSequencer_VST3
 ```
 
 If your JUCE checkout lives somewhere other than
@@ -469,7 +463,7 @@ cmake -B build -DJUCE_PATH="C:\path\to\JUCE" -G "Visual Studio 17 2022" -A x64
 ```bash
 git clone --depth 1 https://github.com/juce-framework/JUCE.git ../.toolchains/JUCE
 cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --target GoSequencer_VST3 GoSequencer_Standalone -j
+cmake --build build --target GoSequencer_VST3 -j
 ```
 
 ### Running the rules-engine tests
@@ -509,8 +503,6 @@ Build artefacts land under `build/GoSequencer_artefacts/<Config>/`:
   - Windows: `C:\Program Files\Common Files\VST3\`
   - macOS: `~/Library/Audio/Plug-Ins/VST3/`
   - Linux: `~/.vst3/`
-- `Standalone/Go Sequencer.exe` (or `.app` on macOS) — runs directly, no
-  host needed; just double-click it.
 
 After copying a new VST3 build over an existing one, rescan plugins in
 your DAW (most hosts cache their plugin list).

@@ -32,7 +32,7 @@ juce_add_plugin(GoSequencer
     BUNDLE_ID "com.florianmotz.gosequencer"
     PLUGIN_MANUFACTURER_CODE Flmz
     PLUGIN_CODE Gseq
-    FORMATS VST3 Standalone
+    FORMATS VST3
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
