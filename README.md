@@ -89,6 +89,7 @@ rather than resetting the whole board's clock.
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
 | **AI Self-Play** | Two built-in players write the record instead of loading one — see below. |
 | **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
+| **From board** / **Use book** | Take the ten stones you played as the opening every game starts from, or go back to the built-in one. |
 | **Ko Rule** | Forbid immediately recapturing the previous position. |
 | **Self Capture** | Allow suicide moves (a group played with zero liberties is removed instead of refused). |
 
@@ -129,9 +130,19 @@ they did.
 Every game opens on the **same ten moves** and diverges from the eleventh. That
 is the point of it here: the sequencer reads position as pitch, so a fixed
 opening is a fixed motif, and the sixty moves after it are a variation on it
-that never repeats. The opening is not invented — it is the first ten moves of
-[`sgf/nine_dan_9x9_43610191.sgf`](sgf/) on a 9×9 and of
+that never repeats. Out of the box that opening is not invented either — it is
+the first ten moves of [`sgf/nine_dan_9x9_43610191.sgf`](sgf/) on a 9×9 and of
 [`sgf/Blackie_BIBA_13x13_25655059.sgf`](sgf/) on a 13×13.
+
+**Or play your own.** Clear the board, click out ten stones with **Place** on
+*Alternate*, and press **From board**: those ten become the opening of every
+game from then on. **Use book** puts the built-in one back. The opening is a
+sequence, not a position — the order decides what gets captured and what is
+legal — so it is the order you clicked in that is taken, not the shape left
+standing; lifting a stone takes it back out. Ten moves alternating from Black,
+legal from an empty board, or the button tells you which one is the problem.
+It is saved with the session, and it belongs to the board it was played on: a
+9×9 opening doesn't apply to a 13×13, which falls back to the book.
 
 ![One run, three games](docs/mockups/self-play.gif)
 

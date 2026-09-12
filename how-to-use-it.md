@@ -243,13 +243,41 @@ exactly as they do for an `.sgf`.
 
 ![One run of self-play games](docs/mockups/self-play.gif)
 
-**The same opening, every time.** Every game plays the same ten book moves and
-diverges from the eleventh. That is deliberate, and it is the musical point of
-the feature: the sequencer turns position into pitch, so a fixed opening is a
+**The same opening, every time.** Every game plays the same ten opening moves
+and diverges from the eleventh. That is deliberate, and it is the musical point
+of the feature: the sequencer turns position into pitch, so a fixed opening is a
 fixed motif — you hear the same figure at the start of every game, and then a
-variation on it that never repeats. The book is real play, not a made-up
-pattern: the first ten moves of `sgf/nine_dan_9x9_43610191.sgf` on a 9×9, and
-of `sgf/Blackie_BIBA_13x13_25655059.sgf` on a 13×13.
+variation on it that never repeats. The built-in one is real play, not a made-up
+pattern: the first ten moves of `sgf/nine_dan_9x9_43610191.sgf` on a 9×9, and of
+`sgf/Blackie_BIBA_13x13_25655059.sgf` on a 13×13.
+
+**Playing your own opening.** Two buttons under the self-play row set where
+those ten moves come from:
+
+1. Press **Clear board**, and set **Place** to *Alternate*.
+2. Click out your ten stones — your joseki, a shape you like the sound of,
+   anything legal.
+3. Press **From board**. The line beside the buttons changes from *the book
+   line* to *your ten moves*, and every game of every run from then on starts
+   with them.
+4. **Use book** puts the built-in opening back.
+
+Two things are worth knowing about how that works. An opening is a **sequence,
+not a position**: the order the stones went down in decides what gets captured
+and what is legal, and the board itself keeps no order. So what gets taken is
+the order you clicked in, not the shape left standing — and lifting a stone
+takes it back out of that sequence again. And the ten have to be a real opening:
+alternating, Black first, and legal one after another from an empty board. If
+they are not, the button says which move is the problem rather than quietly
+taking something else (the usual cause is **Place** being left on *Black*).
+
+Like the three sliders, a new opening is read when the next game is written, so
+it lands on the next game rather than cutting the current one short.
+
+The opening is saved with the session, and it belongs to the board size it was
+played on — the same points mean something else on a 13×13. Changing size
+therefore falls back to the built-in book for that board, and the line beside
+the buttons says so.
 
 **The two players** are heuristics rather than a search or a neural net. Each
 scores every legal point on a handful of things a beginner would recognise —
@@ -294,9 +322,9 @@ run on one game for as long as it is on: the wave is rippling stones that the
 next game would not have played, and swapping the record underneath it would
 cut every echo head off at once.
 
-**Saving.** A generated record is not written into the session — the seed and
-the game number are, and the game is played again from them when the session
-opens. It comes back identical, down to the move you left it on. (This is why
+**Saving.** A generated record is not written into the session — the seed, the
+game number and your opening if you set one are, and the game is played again
+from them when the session opens. It comes back identical, down to the move you left it on. (This is why
 there is not a single floating-point number in
 [`Source/GoAI.h`](Source/GoAI.h): float arithmetic differs a little between
 compilers, and a single near-tie falling the other way would be a different
@@ -511,7 +539,7 @@ recalls the sequencer exactly as you left it, board included.
 
 A self-play run is saved differently, and more cheaply: the record itself is
 not written into the session at all. The **Seed**, the **Game length**, the
-**Variation** and which game of the run was playing are — and the game is
+**Variation**, the opening and which game of the run was playing are — and the game is
 generated again from those when the session opens, landing on the same move
 with the same stones on the board. That is only sound because the players are
 exactly reproducible; see [AI self-play](#ai-self-play).

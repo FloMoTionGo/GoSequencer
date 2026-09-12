@@ -46,6 +46,10 @@ namespace
     //  the self-play row: the switch and its three settings, likewise permanent
     constexpr int aiRowHeight = rowHeight + gap;
 
+    //  and the opening row under it: where the ten moves every game starts on
+    //  come from
+    constexpr int openingRowHeight = rowHeight + gap;
+
     //  the ValueTree property the open state rides along in, so the fold out is
     //  still open when the session comes back
     const juce::Identifier channelsOpenProperty { "channelsOpen" };
@@ -148,6 +152,46 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     for (auto* slider : { &aiMovesSlider, &aiVariationSlider, &aiSeedSlider })
         slider->setEnabled (processor.aiSelfPlay());               //  as above: the tick keeps these in step
 
+    //  The opening. A position is not an opening - the order decides what is
+    //  captured - so this takes the ten stones the board was clicked in, not
+    //  the ten stones standing on it.
+    openingCaption.setText ("opening", juce::dontSendNotification);
+    openingCaption.setColour (juce::Label::textColourId, theme::dimText);
+    openingCaption.setJustificationType (juce::Justification::bottomLeft);
+    addAndMakeVisible (openingCaption);
+
+    openingFromBoardButton.setButtonText ("From board");
+    openingFromBoardButton.onClick = [this]
+    {
+        const auto error = processor.setOpeningFromBoard();
+
+        if (error.isNotEmpty())
+        {
+            showMessage (error);
+            return;
+        }
+
+        refreshOpeningDisplay();
+        showMessage (processor.aiSelfPlay() ? "opening set - from the next game"
+                                            : "opening set");
+    };
+    addAndMakeVisible (openingFromBoardButton);
+
+    openingBookButton.setButtonText ("Use book");
+    openingBookButton.onClick = [this]
+    {
+        processor.useBookOpening();
+        refreshOpeningDisplay();
+        showMessage ("back to the book opening");
+    };
+    addAndMakeVisible (openingBookButton);
+
+    openingLabel.setColour (juce::Label::textColourId, theme::dimText);
+    openingLabel.setJustificationType (juce::Justification::centredLeft);
+    addAndMakeVisible (openingLabel);
+
+    refreshOpeningDisplay();
+
     unloadButton.setButtonText ("Unload");
     unloadButton.onClick = [this]
     {
@@ -196,7 +240,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
 
     for (auto* blank : { &blankCaption1, &blankCaption2, &blankCaption3, &blankCaption4, &blankCaption5,
                          &blankCaption6, &blankCaption7, &blankCaption8, &blankCaption9, &blankCaption10,
-                         &blankCaption11 })
+                         &blankCaption11, &blankCaption12 })
         addAndMakeVisible (*blank);
 
     //  the separators are UTF-8: JUCE must be told, or they arrive as Latin-1
@@ -210,9 +254,10 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     refreshGameDisplay();
 
     setResizable (true, true);
-    setResizeLimits (660, 922 + waveRowHeight + aiRowHeight,
-                     1500, 1900 + channelBlockHeight + waveRowHeight + aiRowHeight);
-    setSize (740, 1042 + waveRowHeight + aiRowHeight + (channelsOpen() ? channelBlockHeight : 0));
+    setResizeLimits (660, 922 + waveRowHeight + aiRowHeight + openingRowHeight,
+                     1500, 1900 + channelBlockHeight + waveRowHeight + aiRowHeight + openingRowHeight);
+    setSize (740, 1042 + waveRowHeight + aiRowHeight + openingRowHeight
+                  + (channelsOpen() ? channelBlockHeight : 0));
 
     refreshChannelSection (false);       //  the window is already the right height
 
@@ -368,6 +413,28 @@ void GoSequencerEditor::showMessage (const juce::String& text)
     repaint (headerBounds);
 }
 
+void GoSequencerEditor::refreshOpeningDisplay()
+{
+    const auto description = processor.openingDescription();
+    const int played = processor.handPlayedCount();
+
+    juce::String line = description;
+
+    //  while there are not ten stones to take, say how far off it is rather
+    //  than leave the button to refuse without warning
+    if (played > 0 && played < GoSequencerProcessor::openingLength)
+        line << "  (" << played << " of " << GoSequencerProcessor::openingLength << " played)";
+
+    openingLabel.setText (line, juce::dontSendNotification);
+    openingLabel.setColour (juce::Label::textColourId,
+                            processor.hasCustomOpening() ? theme::text : theme::dimText);
+
+    openingFromBoardButton.setEnabled (played >= GoSequencerProcessor::openingLength);
+    openingBookButton.setEnabled (processor.hasCustomOpening());
+
+    lastOpeningShown = line;
+}
+
 void GoSequencerEditor::refreshGameDisplay()
 {
     const bool has = processor.hasGame();
@@ -434,9 +501,10 @@ void GoSequencerEditor::resized()
     area.removeFromTop (4);
 
     //  three section headers, six slider rows, the hint and the record's title
-    //  line, the wave replay and self-play rows, plus the fold out when it is open
+    //  line, the wave replay, self-play and opening rows, plus the fold out when
+    //  it is open
     auto controls = area.removeFromBottom (3 * sectionHeight + 6 * rowHeight + 10 * gap + 44
-                                             + waveRowHeight + aiRowHeight
+                                             + waveRowHeight + aiRowHeight + openingRowHeight
                                              + (channelsOpen() ? channelBlockHeight : 0));
     area.removeFromBottom (8);
 
@@ -555,6 +623,18 @@ void GoSequencerEditor::resized()
     }
 
     {
+        //  two buttons and the line that says which opening is in force; the
+        //  line takes the two cells the switches do not need
+        auto cells = columns (nextRow (rowHeight), 4);
+        placeLabelled (cells[0], openingCaption, openingFromBoardButton);
+        placeLabelled (cells[1], blankCaption12, openingBookButton);
+
+        auto info = cells[2].getUnion (cells[3]);
+        info.removeFromTop (16);
+        openingLabel.setBounds (info.removeFromTop (24));
+    }
+
+    {
         //  Wave Replay ignores Loop, and Wave Gap only means anything once
         //  it's on - timerCallback() greys the slider out the rest of the time
         auto cells = columns (nextRow (rowHeight), 2);
@@ -639,6 +719,19 @@ void GoSequencerEditor::timerCallback()
             slider->setEnabled (ai);
 
         refreshGameDisplay();
+    }
+
+    //  stones are placed by clicking the board, which the editor does not hear
+    //  about, so the opening line and its buttons are re-read here
+    {
+        const int played = processor.handPlayedCount();
+        auto line = processor.openingDescription();
+
+        if (played > 0 && played < GoSequencerProcessor::openingLength)
+            line << "  (" << played << " of " << GoSequencerProcessor::openingLength << " played)";
+
+        if (line != lastOpeningShown)
+            refreshOpeningDisplay();
     }
 
     const int position = processor.gamePosition();

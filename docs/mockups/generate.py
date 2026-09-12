@@ -536,7 +536,7 @@ def mockup_channels_foldout():
 
 def mockup_game_record():
     W, H = 320, 300
-    W2, H2 = 760, 424
+    W2, H2 = 760, 486
     img, d = new_canvas(W2, H2)
     x0 = 20
     rrect(d, (14, 14, W2 - 14, H2 - 14), 8, fill=PANEL)
@@ -557,6 +557,12 @@ def mockup_game_record():
     mock_slider(d, x0 + colw + 16, y, colw, "game length", "60 mv", enabled=False)
     mock_slider(d, x0 + 2 * (colw + 16), y, colw, "variation", "35%", enabled=False)
     mock_slider(d, x0 + 3 * (colw + 16), y, colw, "seed", "1", enabled=False)
+
+    y += 62
+    mock_toggle(d, x0, y, colw, "From board", False)
+    mock_toggle(d, x0 + colw + 16, y, colw, "Use book", False, enabled=False)
+    text(d, (x0, y - 18), "opening", font(10.5), fill=DIM)
+    text(d, (x0 + 2 * (colw + 16), y + 6), "the book line", font(11), fill=DIM)
 
     y += 62
     half_w = (W2 - 28) / 2 - 10

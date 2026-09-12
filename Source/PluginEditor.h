@@ -82,7 +82,7 @@ private:
     juce::TextButton freeRunButton, koButton, selfCaptureButton, pathButton, clearButton,
                      loadButton, runGameButton, loopGameButton, unloadButton,
                      previousMoveButton, nextMoveButton, channelsToggle, waveReplayButton,
-                     aiPlayButton;
+                     aiPlayButton, openingFromBoardButton, openingBookButton;
 
     juce::Label sequencerSection, gameSection;
     juce::Label rateCaption, noteCaption, gateCaption, tempoCaption,
@@ -90,11 +90,11 @@ private:
                 blackChannelCaption, whiteChannelCaption,
                 modeCaption, spreadCaption, lifeCaption, lifeModeCaption,
                 colourCaption, sizeCaption, gameRateCaption, moveCaption, waveGapCaption,
-                aiMovesCaption, aiVariationCaption, aiSeedCaption,
+                aiMovesCaption, aiVariationCaption, aiSeedCaption, openingCaption,
                 blankCaption1, blankCaption2, blankCaption3, blankCaption4,
                 blankCaption5, blankCaption6, blankCaption7, blankCaption8, blankCaption9,
-                blankCaption10, blankCaption11;
-    juce::Label hintLabel, gameTitleLabel, gameDetailLabel;
+                blankCaption10, blankCaption11, blankCaption12;
+    juce::Label hintLabel, gameTitleLabel, gameDetailLabel, openingLabel;
 
     std::unique_ptr<SliderAttachment>   noteAttachment, gateAttachment, tempoAttachment,
                                         blackVelocityAttachment, whiteVelocityAttachment,
@@ -124,6 +124,12 @@ private:
     //  be re-read rather than only refreshed when something was clicked
     bool lastAiShown = false;
     int lastAiGameShown = -1;
+
+    /** The opening line, and the enables that go with it - re-read when the
+        count of hand-played stones or the opening itself changes. */
+    void refreshOpeningDisplay();
+
+    juce::String lastOpeningShown;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerEditor)
 };

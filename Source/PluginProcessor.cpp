@@ -477,18 +477,42 @@ go::MoveResult GoSequencerProcessor::placeStone (int idx)
             publishBoard();
     }
 
-    if (result == go::MoveResult::ok && (colourModeParam == nullptr || colourModeParam->getIndex() == 0))
-        nextAlternating.store ((int) go::other (colour), std::memory_order_relaxed);
+    if (result == go::MoveResult::ok)
+    {
+        //  an opening is a sequence, and this is the only place one is played:
+        //  the board itself keeps no order, so it is kept here
+        if ((int) handPlayed.size() < 256)
+            handPlayed.push_back ({ colour, idx, false });
+
+        if (colourModeParam == nullptr || colourModeParam->getIndex() == 0)
+            nextAlternating.store ((int) go::other (colour), std::memory_order_relaxed);
+    }
 
     return result;
 }
 
 void GoSequencerProcessor::eraseStone (int idx)
 {
-    const juce::SpinLock::ScopedLockType sl (boardLock);
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
 
-    if (board.removeStone (idx))
+        if (! board.removeStone (idx))
+            return;
+
         publishBoard();
+    }
+
+    //  lifting a stone takes it back out of the sequence an opening would be
+    //  read from - the last time it was played, since a point can be played
+    //  more than once in one game
+    for (auto it = handPlayed.rbegin(); it != handPlayed.rend(); ++it)
+    {
+        if (it->index == idx)
+        {
+            handPlayed.erase (std::next (it).base());
+            break;
+        }
+    }
 }
 
 void GoSequencerProcessor::clearBoard()
@@ -499,6 +523,7 @@ void GoSequencerProcessor::clearBoard()
         publishBoard();
     }
 
+    handPlayed.clear();
     nextAlternating.store ((int) go::Stone::black, std::memory_order_relaxed);
 }
 
@@ -596,6 +621,10 @@ void GoSequencerProcessor::applyBoardSize (int newSize)
         publishBoard();
     }
 
+    //  nothing on the board was clicked any more, so there is no sequence left
+    //  to read an opening from
+    handPlayed.clear();
+
     if (dropGame)
     {
         gameMoveTotal.store (0, std::memory_order_relaxed);
@@ -654,6 +683,8 @@ juce::String GoSequencerProcessor::loadSgfText (const juce::String& text, const 
         rebuildBoardFromGameLocked (0);
         publishBoard();
     }
+
+    handPlayed.clear();         //  the record put these stones down, not a click
 
     activeSize.store (parsed.size, std::memory_order_relaxed);
     gameMoveTotal.store (parsed.moveCount(), std::memory_order_relaxed);
@@ -741,6 +772,64 @@ juce::String GoSequencerProcessor::gameDetail() const
 }
 
 //==============================================================================
+juce::String GoSequencerProcessor::setOpeningFromBoard()
+{
+    if ((int) handPlayed.size() < openingLength)
+        return "play " + juce::String (openingLength) + " stones on the board first - "
+               + juce::String ((int) handPlayed.size()) + " so far";
+
+    //  The ten have to be a game's worth of moves, not just ten stones: they
+    //  alternate, black first, and they are played in that order from an empty
+    //  board. Checked here rather than at generation time, so a refusal lands on
+    //  the button that asked for it.
+    go::Board trial { board.size() };
+
+    for (int i = 0; i < openingLength; ++i)
+    {
+        const auto& placement = handPlayed[(size_t) i];
+        const auto wanted = (i % 2 == 0 ? go::Stone::black : go::Stone::white);
+
+        if (placement.colour != wanted)
+            return "an opening alternates, black first - move " + juce::String (i + 1)
+                   + " is " + (placement.colour == go::Stone::black ? "black" : "white")
+                   + " (set Place to Alternate)";
+
+        if (trial.play (placement.index, wanted, false, true) != go::MoveResult::ok)
+            return "move " + juce::String (i + 1) + " is not legal from an empty board";
+    }
+
+    for (int i = 0; i < openingLength; ++i)
+        customOpening[(size_t) i] = handPlayed[(size_t) i].index;
+
+    customOpeningCount = openingLength;
+    customOpeningSize = board.size();
+
+    //  a run reads its opening when it writes a game, so this lands with the
+    //  next one - the same rule the three sliders follow
+    prepareNextAiGame();
+    return {};
+}
+
+void GoSequencerProcessor::useBookOpening()
+{
+    customOpeningCount = 0;
+    customOpeningSize = 0;
+    prepareNextAiGame();
+}
+
+juce::String GoSequencerProcessor::openingDescription() const
+{
+    if (! hasCustomOpening())
+        return "the book line";
+
+    if (customOpeningSize != boardSize())
+        return "your ten moves (" + juce::String (customOpeningSize) + "x"
+             + juce::String (customOpeningSize) + " - not this board)";
+
+    return "your ten moves";
+}
+
+//==============================================================================
 goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) const
 {
     goai::Settings settings;
@@ -748,6 +837,14 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
     settings.size      = size;
     settings.moves     = aiMovesParam     != nullptr ? aiMovesParam->get() : 60;
     settings.variation = aiVariationParam != nullptr ? aiVariationParam->get() : 35;    // per cent, as the slider reads
+
+    //  a custom opening is a set of points, so it only means anything on the
+    //  board it was played on; on any other one the book takes over again
+    if (hasCustomOpening() && customOpeningSize == size)
+    {
+        settings.opening = customOpening;
+        settings.hasOpening = true;
+    }
 
     const auto base = (unsigned int) (aiSeedParam != nullptr ? aiSeedParam->get() : 1);
     settings.seed = goai::gameSeed (base, gameNumber);
@@ -777,6 +874,8 @@ void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
         rebuildBoardFromGameLocked (0);
         publishBoard();
     }
+
+    handPlayed.clear();         //  as above: the game is playing these, not a click
 
     aiActive.store (true, std::memory_order_relaxed);
     aiGameCounter.store (gameNumber, std::memory_order_relaxed);
@@ -880,6 +979,7 @@ void GoSequencerProcessor::setGamePosition (int position)
         publishBoard();
     }
 
+    handPlayed.clear();
     gamePositionMirror.store (clamped, std::memory_order_relaxed);
 }
 
@@ -1319,6 +1419,19 @@ void GoSequencerProcessor::getStateInformation (juce::MemoryBlock& destData)
         //  saving sixty moves that can be derived
         xml->setAttribute ("aiGame", aiGameCounter.load (std::memory_order_relaxed));
 
+        //  the opening is the one thing about a run that cannot be derived, so
+        //  it is written out: ten points, and the board they were played on
+        if (hasCustomOpening())
+        {
+            juce::String points;
+
+            for (int i = 0; i < openingLength; ++i)
+                points << (i > 0 ? " " : "") << customOpening[(size_t) i];
+
+            xml->setAttribute ("aiOpening", points);
+            xml->setAttribute ("aiOpeningSize", customOpeningSize);
+        }
+
         if (sgfText.isNotEmpty())
         {
             xml->setAttribute ("sgfName", sourceName);
@@ -1341,6 +1454,8 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     const int savedSize   = xml->getIntAttribute ("boardSizeValue", 9);
     const int position    = xml->getIntAttribute ("gamePosition", 0);
     const int savedAiGame = xml->getIntAttribute ("aiGame", 0);
+    const auto savedOpening = xml->getStringAttribute ("aiOpening");
+    const int savedOpeningSize = xml->getIntAttribute ("aiOpeningSize", 0);
     const int nextColour  = xml->getIntAttribute ("nextColour", (int) go::Stone::black);
     const auto sgfName    = xml->getStringAttribute ("sgfName");
 
@@ -1389,6 +1504,34 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     nextAlternating.store (nextColour == (int) go::Stone::white ? (int) go::Stone::white
                                                                 : (int) go::Stone::black,
                            std::memory_order_relaxed);
+
+    customOpeningCount = 0;
+    customOpeningSize = 0;
+    handPlayed.clear();
+
+    if (savedOpening.isNotEmpty() && go::isSupportedSize (savedOpeningSize))
+    {
+        auto points = juce::StringArray::fromTokens (savedOpening, " ", {});
+        points.removeEmptyStrings();
+
+        if (points.size() == openingLength)
+        {
+            bool inRange = true;
+
+            for (int i = 0; i < openingLength; ++i)
+            {
+                const int idx = points[i].getIntValue();
+                inRange = inRange && idx >= 0 && idx < savedOpeningSize * savedOpeningSize;
+                customOpening[(size_t) i] = idx;
+            }
+
+            if (inRange)
+            {
+                customOpeningCount = openingLength;
+                customOpeningSize = savedOpeningSize;
+            }
+        }
+    }
 
     //  A saved run comes back by being played again: same seed, same game
     //  number, same sixty moves, and then the position it was left at. The

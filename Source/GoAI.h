@@ -14,10 +14,12 @@
 //  the way two people with different habits do - and the games that come out
 //  have a shape rather than a spread.
 //
-//  Every game opens on the same book line (see openingMoves) and diverges from
-//  the first move after it. That is deliberate: the sequencer reads position as
-//  pitch, so a fixed opening is a fixed motif, and what follows is the variation
-//  on it.
+//  Every game opens on the same ten moves and diverges from the first move
+//  after them. That is deliberate: the sequencer reads position as pitch, so a
+//  fixed opening is a fixed motif, and what follows is the variation on it. The
+//  ten are either the book line below or an opening of the player's own (see
+//  Settings::opening) - which one makes no difference to how the two of them
+//  play afterwards.
 //
 //  Determinism is part of the contract: a seed names a game exactly, on any
 //  compiler and any machine, today and after a reload. That is why there is not
@@ -163,15 +165,17 @@ namespace goai
     }
 
     //==============================================================================
-    /** The book both players open from, as (column, row) pairs, Black first.
-        These are not invented: they are the first ten moves of two of the records
-        in sgf/ - nine_dan_9x9_43610191.sgf on a 9x9, Blackie_BIBA_13x13_25655059.sgf
-        on a 13x13 - so the motif every game starts from is real play rather than a
+    /** The book both players open from unless they are given an opening of their
+        own, as (column, row) pairs, Black first. These are not invented: they are
+        the first ten moves of two of the records in sgf/ -
+        nine_dan_9x9_43610191.sgf on a 9x9, Blackie_BIBA_13x13_25655059.sgf on a
+        13x13 - so the motif every game starts from is real play rather than a
         pattern that merely looks like it.
 
-        A book point that is somehow not legal is skipped and the players take over
-        early. On an empty board that cannot happen; the generator simply does not
-        depend on it. */
+        An opening point that is somehow not legal is skipped and the players take
+        over early. On an empty board a book line cannot do that, and a custom
+        opening is checked before it is ever set; the generator simply does not
+        depend on either. */
     inline const std::vector<std::pair<int, int>>& openingMoves (int size)
     {
         static const std::vector<std::pair<int, int>> book9
@@ -189,12 +193,24 @@ namespace goai
         return size == 13 ? book13 : book9;
     }
 
+    /** How long an opening is, book or custom: ten moves, black first. */
+    constexpr int openingLength = 10;
+
     //==============================================================================
     struct Settings
     {
         int size = 9;
-        int moves = 60;                 // the whole game, book included
-        int openingLength = 10;         // how much of the book to follow
+        int moves = 60;                 // the whole game, the opening included
+
+        /** An opening of one's own, as board indices in the order they were
+            played. The colours are not stored because they are not free: an
+            opening alternates, black first, the way a game does.
+
+            Left empty, the two of them open on the book above. Set, they open
+            on this instead - and nothing else about them changes, which is the
+            point: the same players, a different motif. */
+        std::array<int, (size_t) openingLength> opening {};
+        bool hasOpening = false;
 
         /** Per cent. 0 always plays the best point it can see, 100 picks freely
             among the best few. It is the one knob between "the same game every
@@ -206,6 +222,20 @@ namespace goai
         Style black = territorial();
         Style white = fighting();
     };
+
+    /** The point the opening asks for at this move, or -1 once it is over. */
+    inline int openingPoint (const Settings& settings, int move) noexcept
+    {
+        if (move < 0 || move >= openingLength)
+            return -1;
+
+        if (settings.hasOpening)
+            return settings.opening[(size_t) move];
+
+        const auto& book = openingMoves (settings.size);
+        const auto point = book[(size_t) move];
+        return go::index (point.first, point.second, settings.size);
+    }
 
     //==============================================================================
     namespace detail
@@ -553,24 +583,19 @@ namespace goai
         for (int i = 0; i < 8; ++i)     // xorshift takes a moment to leave a small seed behind
             rng.next();
 
-        const auto& book = openingMoves (game.size);
-        const int bookLength = std::min ((int) book.size(), std::max (0, settings.openingLength));
-
         go::Stone colour = go::Stone::black;
 
         for (int move = 0; move < target; ++move)
         {
             int played = -1;
+            const int wanted = openingPoint (settings, move);
 
-            if (move < bookLength)
+            if (wanted >= 0)
             {
-                const auto point = book[(size_t) move];
-                const int idx = go::index (point.first, point.second, game.size);
-
                 //  play() leaves the board untouched unless the move is legal,
-                //  so a refused book point costs nothing but the fall through
-                if (board.play (idx, colour, false, true) == go::MoveResult::ok)
-                    played = idx;
+                //  so a refused opening point costs nothing but the fall through
+                if (board.play (wanted, colour, false, true) == go::MoveResult::ok)
+                    played = wanted;
             }
 
             if (played < 0)

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <atomic>
+#include <iterator>
 #include <vector>
 
 #include "GoAI.h"
@@ -214,6 +215,34 @@ public:
 
     bool aiSelfPlay()   const noexcept { return aiActive.load (std::memory_order_relaxed); }
 
+    //==============================================================================
+    //  The opening. Ten moves, black first, and the same ten at the start of
+    //  every game of a run - either the book line in GoAI.h or one played by
+    //  hand on the board.
+    //
+    //  A position is not an opening: the order the stones went down in decides
+    //  what is captured and what is legal, and the board does not remember it.
+    //  So the stones a click places are recorded as they are played (handPlayed)
+    //  and it is that sequence, not the board, which an opening is taken from.
+
+    static constexpr int openingLength = goai::openingLength;
+
+    /** Takes the first ten stones played by hand since the board was last
+        cleared as the opening. Returns an empty string, or a sentence saying
+        why those ten will not do. */
+    juce::String setOpeningFromBoard();
+
+    /** Back to the book line for this board size. */
+    void useBookOpening();
+
+    bool hasCustomOpening() const noexcept { return customOpeningCount == openingLength; }
+
+    /** "your ten moves" or "the book line", for the editor to show. */
+    juce::String openingDescription() const;
+
+    /** How many hand-played stones an opening could be taken from right now. */
+    int handPlayedCount() const noexcept { return (int) handPlayed.size(); }
+
     /** Which game of the run is playing, counted from 1, and the seed it was
         generated from - the pair that names it exactly. */
     int  aiGameNumber() const noexcept { return aiGameCounter.load (std::memory_order_relaxed) + 1; }
@@ -360,6 +389,17 @@ private:
     sgf::Game game;
     juce::String sgfText, sourceName;
     int gameMovePosition = 0;                      // guarded by boardLock
+
+    //  Stones placed by hand, in the order they were played: where a custom
+    //  opening comes from. Message thread only, and dropped whenever something
+    //  other than a click puts stones on the board.
+    std::vector<sgf::Placement> handPlayed;
+
+    //  the opening every game of a run starts from, or count 0 for the book.
+    //  Kept as board indices, so it belongs to the size it was played on.
+    std::array<int, (size_t) goai::openingLength> customOpening {};
+    int customOpeningCount = 0;
+    int customOpeningSize = 0;
 
     //  the game after the one playing, generated in advance so the swap at the
     //  end of a game costs the audio thread nothing

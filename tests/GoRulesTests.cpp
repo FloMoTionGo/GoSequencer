@@ -781,6 +781,76 @@ namespace
         check (goai::gameSeed (7u, 3) != goai::gameSeed (8u, 3), "neighbouring runs do not overlap");
     }
 
+
+    void testAiCustomOpening()
+    {
+        std::printf ("self-play: an opening of one's own\n");
+
+        //  a corner joseki rather than the book's centre game, so the two are
+        //  impossible to confuse on the board
+        const int points[goai::openingLength]
+        {
+            ix (2, 2), ix (6, 6), ix (6, 2), ix (2, 6), ix (3, 6),
+            ix (2, 5), ix (3, 5), ix (2, 4), ix (3, 4), ix (2, 3)
+        };
+
+        auto settings = aiSettings (9, 60, 40, 4242u);
+        settings.hasOpening = true;
+
+        for (int i = 0; i < goai::openingLength; ++i)
+            settings.opening[(size_t) i] = points[i];
+
+        bool followed = true, legal = true, lengths = true;
+
+        for (int seed = 1; seed <= 8; ++seed)
+        {
+            settings.seed = (std::uint32_t) seed * 48271u;
+            const auto game = goai::generate (settings);
+
+            if (game.moveCount() != 60) lengths = false;
+            if (refusedMoves (game) != 0) legal = false;
+
+            for (int i = 0; i < goai::openingLength; ++i)
+                if (game.moves[(size_t) i].index != points[i])
+                    followed = false;
+        }
+
+        check (followed, "eight games, all ten of the given moves, whatever the seed");
+        check (legal, "and the rest of each game is still legal");
+        check (lengths, "and still sixty moves long");
+
+        //  the players are unchanged by it: same opening, different middlegames
+        settings.seed = 11u;
+        const auto a = goai::generate (settings);
+        settings.seed = 12u;
+        const auto b = goai::generate (settings);
+
+        int firstDifference = a.moveCount();
+
+        for (int i = 0; i < a.moveCount(); ++i)
+            if (a.moves[(size_t) i].index != b.moves[(size_t) i].index) { firstDifference = i; break; }
+
+        check (firstDifference >= goai::openingLength, "two games still never differ inside it");
+        check (firstDifference < a.moveCount(), "and they do differ after it");
+
+        //  and it really is a different game from the book's
+        auto book = aiSettings (9, 60, 40, 11u);
+        const auto fromBook = goai::generate (book);
+        check (fromBook.moves[0].index != a.moves[0].index, "a custom opening is not the book one");
+
+        //  clearing the flag hands it back to the book, the same seed and all
+        settings.seed = 11u;
+        settings.hasOpening = false;
+        const auto backToBook = goai::generate (settings);
+
+        bool identical = backToBook.moveCount() == fromBook.moveCount();
+
+        for (int i = 0; i < backToBook.moveCount() && identical; ++i)
+            identical = backToBook.moves[(size_t) i].index == fromBook.moves[(size_t) i].index;
+
+        check (identical, "and dropping it plays the book game exactly");
+    }
+
     void testAiSwapIsAllocationFree()
     {
         std::printf ("self-play: swapping a game in\n");
@@ -833,6 +903,7 @@ int main (int argc, char** argv)
     testAiKeepsTheBoardAlive();
     testAiDeterminism();
     testAiGameSeeds();
+    testAiCustomOpening();
     testAiSwapIsAllocationFree();
 
     if (argc > 1)

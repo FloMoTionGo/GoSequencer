@@ -100,7 +100,6 @@ int main (int argc, char** argv)
     goai::Settings settings;
     settings.size          = intArg    (argc, argv, "--size", 9);
     settings.moves         = intArg    (argc, argv, "--moves", 60);
-    settings.openingLength = intArg    (argc, argv, "--opening", 10);
     settings.variation     = intArg    (argc, argv, "--variation", 35);
 
     const int games        = intArg    (argc, argv, "--games", 6);
@@ -110,7 +109,7 @@ int main (int argc, char** argv)
 
     std::string json = "{\n";
     json += "  \"size\": " + std::to_string (settings.size) + ",\n";
-    json += "  \"opening\": " + std::to_string (settings.openingLength) + ",\n";
+    json += "  \"opening\": " + std::to_string (goai::openingLength) + ",\n";
     json += "  \"variation\": " + std::to_string (settings.variation) + ",\n";
     json += "  \"baseSeed\": " + std::to_string (base) + ",\n";
     json += "  \"games\": [\n";
