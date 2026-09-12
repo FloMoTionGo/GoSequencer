@@ -1,0 +1,24 @@
+# Build output
+build/
+build-*/
+out/
+cmake-build-*/
+
+# Toolchains fetched by the build (JUCE checkout, Rack SDK)
+/../.toolchains/
+.toolchains/
+
+# IDE / editor
+.vs/
+.vscode/*
+!.vscode/settings.json
+*.user
+CMakeUserPresets.json
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Compiled test binary
+tests/*.exe
+tests/*.o
