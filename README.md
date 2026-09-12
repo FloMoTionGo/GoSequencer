@@ -21,6 +21,7 @@ overview.
 - [Stone lifespan](#stone-lifespan)
 - [Controls](#controls)
 - [Loading a game record (SGF)](#loading-a-game-record-sgf)
+- [AI self-play](#ai-self-play)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
 - [Building it](#building-it)
   - [Requirements](#requirements)
@@ -86,6 +87,8 @@ rather than resetting the whole board's clock.
 | **Black/White Velocity** | Fixed velocity per colour. |
 | **Spread** | Semitone transpose per ring (Polyrhythm). |
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
+| **AI Self-Play** | Two built-in players write the record instead of loading one — see below. |
+| **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
 | **Ko Rule** | Forbid immediately recapturing the previous position. |
 | **Self Capture** | Allow suicide moves (a group played with zero liberties is removed instead of refused). |
 
@@ -112,6 +115,62 @@ real game onto the board:
   than a synchronized pulse. With **Loop** on, the record wraps without
   clearing the board, so the wave keeps running until you stop. See
   [how-to-use-it.md](how-to-use-it.md#wave-replay) for the full mechanics.
+
+## AI self-play
+
+Turn on **AI self-play** and the plugin writes the record itself: two players
+take the board, game after game, with no file to load and nothing to connect
+to. It is the same machinery as an SGF underneath, so **Move Rate**, **Run**,
+**Loop**, the position slider and the step buttons all keep working exactly as
+they did.
+
+![Six self-play games, one opening](docs/mockups/self-play-games.png)
+
+Every game opens on the **same ten moves** and diverges from the eleventh. That
+is the point of it here: the sequencer reads position as pitch, so a fixed
+opening is a fixed motif, and the sixty moves after it are a variation on it
+that never repeats. The opening is not invented — it is the first ten moves of
+[`sgf/nine_dan_9x9_43610191.sgf`](sgf/) on a 9×9 and of
+[`sgf/Blackie_BIBA_13x13_25655059.sgf`](sgf/) on a 13×13.
+
+![One run, three games](docs/mockups/self-play.gif)
+
+**The two players.** Black (*Kuro*) plays territorially — connects, extends,
+takes the third and fourth lines, fights when there is something to take. White
+(*Shiro*) fights — contact, cuts and ataris are worth more to it than shape is.
+They are heuristics, not a search or a net: every legal point is scored on
+captures, saving its own stones from atari, cutting, connecting, staying near
+the last move and keeping off the first line, and one of the best twelve is
+drawn. A whole game takes well under a millisecond, on the message thread, one
+game ahead of the one playing — so the swap at the end of a game costs the
+audio thread nothing.
+
+**The three settings.**
+
+- **Game Length** — 12 to 160 moves. The ten book moves are part of it.
+- **Variation** — 0% plays the best point it can see every time, so the run is
+  one game repeating. 100% picks freely among the best twelve. The default 35%
+  keeps the play recognisable and the games different.
+- **Seed** — names the run. The same seed plays the same games in the same
+  order, on any machine, and a saved session comes back on the game it was
+  left on (it is regenerated, not stored).
+
+All three are read when a game is *written*, so changing one lands on the next
+game rather than cutting the current one short. To restart a run immediately,
+switch AI self-play off and on.
+
+Loading an .sgf or pressing **Unload** hands the board back and switches
+self-play off. **Wave Replay** holds a run on one game while it is on — the
+wave is rippling stones the next game would not have played.
+
+**Exporting the games.** `GoAiDump` plays the same two players outside the
+plugin and writes ordinary `.sgf` files, which load straight back into it (or
+into any Go viewer):
+
+```powershell
+cmake --build build --config Release --target GoAiDump
+.\build\Release\GoAiDump.exe --games 6 --seed 1 --out sgf\selfplay
+```
 
 ## Using it in Ableton Live
 
@@ -210,8 +269,11 @@ GoSequencer/
 │   ├── PluginEditor.*      # Plugin UI (sliders, combo boxes, board view)
 │   ├── BoardComponent.*    # The clickable Go board widget
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE)
+│   ├── GoAI.h              # The two self-play players (no JUCE, no floats)
 │   └── SgfParser.h         # Minimal SGF (game record) reader
-├── sgf/                    # Sample game record for trying SGF playback
+├── sgf/                    # Sample game records for trying SGF playback
+├── tools/
+│   └── GoAiDump.cpp        # Plays the two players outside the plugin, writes .sgf
 └── tests/
-    └── GoRulesTests.cpp    # Rules-engine unit test, run via ctest
+    └── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
 ```

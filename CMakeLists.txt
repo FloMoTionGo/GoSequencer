@@ -75,3 +75,11 @@ target_compile_features(GoRulesTests PRIVATE cxx_std_17)
 # The example record is replayed through the rules engine as part of the test.
 add_test(NAME go_rules
          COMMAND GoRulesTests "${CMAKE_CURRENT_SOURCE_DIR}/sgf/89706031-145-Gruener123-FloMo.sgf")
+
+#==============================================================================
+# The two self-play players, outside the plugin: writes the games they play as
+# .sgf files (loadable straight back into the plugin) and as the JSON the mockup
+# animations in docs/mockups are drawn from.
+add_executable(GoAiDump tools/GoAiDump.cpp)
+target_include_directories(GoAiDump PRIVATE Source)
+target_compile_features(GoAiDump PRIVATE cxx_std_17)

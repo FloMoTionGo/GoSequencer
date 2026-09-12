@@ -9,6 +9,9 @@ since they need to exist before/without a built plugin - drawn with Pillow.
 Run:  python generate.py
 """
 
+import json
+import os
+
 from PIL import Image, ImageDraw, ImageFont
 
 SS = 3  # supersample factor for anti-aliasing
@@ -533,7 +536,7 @@ def mockup_channels_foldout():
 
 def mockup_game_record():
     W, H = 320, 300
-    W2, H2 = 760, 362
+    W2, H2 = 760, 424
     img, d = new_canvas(W2, H2)
     x0 = 20
     rrect(d, (14, 14, W2 - 14, H2 - 14), 8, fill=PANEL)
@@ -548,6 +551,12 @@ def mockup_game_record():
     mock_combo(d, x0 + colw + 16, y, colw, "move rate", "1 bar")
     mock_toggle(d, x0 + 2 * (colw + 16), y, colw, "Run game", True)
     mock_toggle(d, x0 + 3 * (colw + 16), y, colw, "Loop", False, enabled=False)
+
+    y += 62
+    mock_toggle(d, x0, y, colw, "AI self-play", False)
+    mock_slider(d, x0 + colw + 16, y, colw, "game length", "60 mv", enabled=False)
+    mock_slider(d, x0 + 2 * (colw + 16), y, colw, "variation", "35%", enabled=False)
+    mock_slider(d, x0 + 3 * (colw + 16), y, colw, "seed", "1", enabled=False)
 
     y += 62
     half_w = (W2 - 28) / 2 - 10
@@ -575,6 +584,172 @@ def mockup_game_record():
     save(img, "game-record-panel", W2, H2)
 
 
+# =============================================================================
+# 5. AI self-play
+#
+# These two are drawn from ai-games.json, which is not hand written: it is what
+# tools/GoAiDump.cpp printed, so every stone below is a move the plugin's own
+# players actually made. Regenerate both the data and the pictures with
+#
+#     cmake --build ../../build --config Release --target GoAiDump
+#     ../../build/Release/GoAiDump --games 6 --seed 1 --json ai-games.json
+#     python generate.py
+# =============================================================================
+
+AI_DATA_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ai-games.json")
+AI_OPENING = 10
+
+
+def load_ai_games():
+    with open(AI_DATA_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def draw_ai_stone(d, cx, cy, radius, black):
+    """Like draw_stone, but with a thinner outline: these boards carry fifty
+    stones rather than five, and the heavy ring turns them into a blob."""
+    d.ellipse([s(cx - radius), s(cy - radius), s(cx + radius), s(cy + radius)],
+              fill=BLACK_STONE if black else WHITE_STONE,
+              outline=WOOD_DARK if black else LINES, width=sw(1.0))
+
+
+def draw_ai_board(d, ox, oy, cell, position, size, last_move=None, radius=None):
+    """position: one frame of the JSON - "0" empty, "1" black, "2" white."""
+    draw_goban(d, ox, oy, cell, size)
+    r = radius or cell * 0.41
+
+    for i, ch in enumerate(position):
+        if ch == "0":
+            continue
+        cx, cy = pt(ox, oy, cell, i % size, i // size)
+        draw_ai_stone(d, cx, cy, r, ch == "1")
+
+    if last_move is not None and 0 <= last_move < len(position) and position[last_move] != "0":
+        cx, cy = pt(ox, oy, cell, last_move % size, last_move // size)
+        d.ellipse([s(cx - r * 0.45), s(cy - r * 0.45), s(cx + r * 0.45), s(cy + r * 0.45)],
+                  outline=ACCENT, width=sw(1.8))
+
+
+def mockup_selfplay_games():
+    """Six games from one opening: the last position of each, side by side."""
+    data = load_ai_games()
+    size = data["size"]
+    games = data["games"][:6]
+
+    cell = 26
+    board_w = cell * (size - 1) + 44
+    gap_x, gap_y = 26, 54
+    cols, rows = 3, 2
+
+    W = 40 + cols * board_w + (cols - 1) * gap_x
+    H = 92 + rows * board_w + (rows - 1) * gap_y + 16
+
+    img, d = caption_bar(W, H, "AI self-play: six games, one opening",
+                         "the last position of each - the first ten moves were identical in all of them")
+
+    for n, game in enumerate(games):
+        col, row = n % cols, n // cols
+        ox = 40 + col * (board_w + gap_x)
+        oy = 92 + row * (board_w + gap_y)
+
+        draw_ai_board(d, ox, oy, cell, game["frames"][-1], size,
+                      last_move=game["moves"][-1])
+
+        label_y = oy + cell * (size - 1) + 30
+        text(d, (ox - 22, label_y), "game %d" % (n + 1), font(10.5, bold=True), fill=TEXT)
+        text(d, (ox + board_w - 22, label_y), "%d captured" % game["captures"],
+             font(10), fill=DIM, anchor="ra")
+
+    save(img, "self-play-games", W, H)
+
+
+def selfplay_frame(data, game_index, move, cell=32):
+    """One frame of the animation: the board part way through one game, with the
+    move counter underneath and the book opening marked out on it."""
+    size = data["size"]
+    game = data["games"][game_index]
+    total = len(game["moves"])
+
+    span = cell * (size - 1)
+    W = span + 120
+    H = span + 196
+
+    img, d = new_canvas(W, H)
+
+    text(d, (30, 22), "AI SELF-PLAY", font(11, bold=True), fill=ACCENT)
+    text(d, (W - 30, 22), "game %d of the run" % (game_index + 1),
+         font(11), fill=DIM, anchor="ra")
+    text(d, (30, 42), "Kuro (territorial)  vs  Shiro (fighting)", font(11), fill=TEXT)
+
+    ox, oy = 60, 86
+    last = game["moves"][move - 1] if move > 0 else None
+    draw_ai_board(d, ox, oy, cell, game["frames"][move], size, last_move=last)
+
+    # the progress bar: one cell per move, the book in accent
+    bar_y = oy + span + 44
+    bar_w = span
+    step = bar_w / total
+
+    for i in range(total):
+        x = ox + i * step
+        played = i < move
+        book = i < AI_OPENING
+
+        if book:
+            colour = ACCENT if played else tuple(int(c * 0.42) for c in ACCENT)
+        else:
+            colour = TEXT if played else PANEL_BRIGHT
+
+        d.rectangle([s(x), s(bar_y), s(x + step * 0.72), s(bar_y + 7)], fill=colour)
+
+    label = "opening" if move <= AI_OPENING else "self-play"
+    text(d, (ox, bar_y + 20), label, font(10), fill=ACCENT if move <= AI_OPENING else DIM)
+    text(d, (ox + bar_w, bar_y + 20), "move %d / %d" % (move, total),
+         font(10), fill=DIM, anchor="ra")
+    #  every stone that is not on the board was captured, so the count so far
+    #  is just the moves played less what is standing
+    standing = sum(1 for ch in game["frames"][move] if ch != "0")
+
+    text(d, (ox, bar_y + 40), "seed %d" % game["seed"], font(10), fill=DIM)
+    text(d, (ox + bar_w, bar_y + 40), "%d captured" % (move - standing),
+         font(10), fill=DIM, anchor="ra")
+
+    return img.resize((W, H), Image.LANCZOS)
+
+
+def mockup_selfplay_animation(games=3, hold_frames=9):
+    """Several games in a row, exactly as a run of them plays: the same ten book
+    moves every time, then a different middlegame."""
+    data = load_ai_games()
+
+    frames, durations = [], []
+
+    for gi in range(min(games, len(data["games"]))):
+        total = len(data["games"][gi]["moves"])
+
+        for move in range(total + 1):
+            frames.append(selfplay_frame(data, gi, move))
+            # the book moves are held a little longer: that is the part that
+            # repeats, and it is what the ear is meant to recognise
+            durations.append(150 if move <= AI_OPENING else 90)
+
+        for _ in range(hold_frames):
+            frames.append(frames[-1])
+            durations.append(120)
+
+    #  one shared palette and disposal 1 (leave the frame in place), so the
+    #  encoder only has to store the stones that changed between two moves
+    palette = [f.convert("P", palette=Image.ADAPTIVE, colors=32) for f in frames]
+
+    out = "self-play.gif"
+    palette[0].save(out, save_all=True, append_images=palette[1:], duration=durations,
+                    loop=0, optimize=True, disposal=1)
+
+    print("wrote %s  %d frames  %dx%d  %.1f KB"
+          % (out, len(frames), frames[0].width, frames[0].height,
+             os.path.getsize(out) / 1024.0))
+
+
 if __name__ == "__main__":
     mockup_spiral()
     mockup_quads()
@@ -583,3 +758,5 @@ if __name__ == "__main__":
     mockup_sequencer_panel()
     mockup_channels_foldout()
     mockup_game_record()
+    mockup_selfplay_games()
+    mockup_selfplay_animation()

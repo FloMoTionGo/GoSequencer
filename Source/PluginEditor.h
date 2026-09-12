@@ -72,7 +72,8 @@ private:
                  blackVelocitySlider, whiteVelocitySlider,
                  spreadSlider, lifeSlider,
                  blackChannelSlider, whiteChannelSlider,
-                 moveSlider, waveGapSlider;
+                 moveSlider, waveGapSlider,
+                 aiMovesSlider, aiVariationSlider, aiSeedSlider;
 
     //  one slider per playhead: assigned, never offset from a base
     static constexpr int headChannels = GoSequencerProcessor::maxHeadChannels;
@@ -80,7 +81,8 @@ private:
     std::array<juce::Label,  (size_t) headChannels> headChannelCaptions;
     juce::TextButton freeRunButton, koButton, selfCaptureButton, pathButton, clearButton,
                      loadButton, runGameButton, loopGameButton, unloadButton,
-                     previousMoveButton, nextMoveButton, channelsToggle, waveReplayButton;
+                     previousMoveButton, nextMoveButton, channelsToggle, waveReplayButton,
+                     aiPlayButton;
 
     juce::Label sequencerSection, gameSection;
     juce::Label rateCaption, noteCaption, gateCaption, tempoCaption,
@@ -88,21 +90,24 @@ private:
                 blackChannelCaption, whiteChannelCaption,
                 modeCaption, spreadCaption, lifeCaption, lifeModeCaption,
                 colourCaption, sizeCaption, gameRateCaption, moveCaption, waveGapCaption,
+                aiMovesCaption, aiVariationCaption, aiSeedCaption,
                 blankCaption1, blankCaption2, blankCaption3, blankCaption4,
                 blankCaption5, blankCaption6, blankCaption7, blankCaption8, blankCaption9,
-                blankCaption10;
+                blankCaption10, blankCaption11;
     juce::Label hintLabel, gameTitleLabel, gameDetailLabel;
 
     std::unique_ptr<SliderAttachment>   noteAttachment, gateAttachment, tempoAttachment,
                                         blackVelocityAttachment, whiteVelocityAttachment,
                                         spreadAttachment, lifeAttachment,
                                         blackChannelAttachment, whiteChannelAttachment,
-                                        waveGapAttachment;
+                                        waveGapAttachment,
+                                        aiMovesAttachment, aiVariationAttachment, aiSeedAttachment;
     std::array<std::unique_ptr<SliderAttachment>, (size_t) headChannels> headChannelAttachments;
     std::unique_ptr<ComboBoxAttachment> rateAttachment, colourAttachment, sizeAttachment, gameRateAttachment,
                                         modeAttachment, lifeModeAttachment;
     std::unique_ptr<ButtonAttachment>   freeRunAttachment, koAttachment, selfCaptureAttachment,
-                                        runGameAttachment, loopGameAttachment, waveReplayAttachment;
+                                        runGameAttachment, loopGameAttachment, waveReplayAttachment,
+                                        aiPlayAttachment;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::File lastSgfDirectory;
@@ -114,6 +119,11 @@ private:
     int lastModeShown = -1;
     bool lastWaveReplayShown = false;
     bool dragHighlight = false;
+
+    //  a run swaps its own record in when a game ends, so the title line has to
+    //  be re-read rather than only refreshed when something was clicked
+    bool lastAiShown = false;
+    int lastAiGameShown = -1;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerEditor)
 };

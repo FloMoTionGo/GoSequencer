@@ -24,6 +24,8 @@ deeper into *how* and *why* each feature behaves the way it does.
    - [Ko rule, Self capture, Free run, Show path, Clear board](#ko-rule-self-capture-free-run-show-path-clear-board)
 5. [The MIDI CHANNELS fold-out](#5-the-midi-channels-fold-out)
 6. [The GAME RECORD section](#6-the-game-record-section)
+   - [AI self-play](#ai-self-play)
+   - [Wave Replay](#wave-replay)
 7. [Playhead modes explained in depth](#7-playhead-modes-explained-in-depth)
 8. [Stone lifespan in depth](#8-stone-lifespan-in-depth)
 9. [Go rules reference](#9-go-rules-reference)
@@ -230,6 +232,87 @@ While a game is running, its moves are placed onto the board using the
 *same* rules engine as manual clicks (captures, etc. all apply), so
 captures from the real game show up in the header's capture tally too.
 
+### AI self-play
+
+Instead of loading a record, the plugin can write one. Turn on **AI self-play**
+and two players take the board — game after game, for as long as **Loop** is
+on, with no file and nothing to connect to. Everything else in this section
+keeps working unchanged: a generated game *is* a record, so **Move Rate**,
+**Run game**, **Loop**, the position slider and **◀** / **▶** all behave
+exactly as they do for an `.sgf`.
+
+![One run of self-play games](docs/mockups/self-play.gif)
+
+**The same opening, every time.** Every game plays the same ten book moves and
+diverges from the eleventh. That is deliberate, and it is the musical point of
+the feature: the sequencer turns position into pitch, so a fixed opening is a
+fixed motif — you hear the same figure at the start of every game, and then a
+variation on it that never repeats. The book is real play, not a made-up
+pattern: the first ten moves of `sgf/nine_dan_9x9_43610191.sgf` on a 9×9, and
+of `sgf/Blackie_BIBA_13x13_25655059.sgf` on a 13×13.
+
+**The two players** are heuristics rather than a search or a neural net. Each
+scores every legal point on a handful of things a beginner would recognise —
+stones captured, own stones saved from atari, enemy groups put in atari, cuts,
+connections, distance from the last move, distance from its own nearest stone,
+which line it sits on — and then draws one of the best twelve. What makes them
+two players is the weighting:
+
+| | Black — *Kuro*, territorial | White — *Shiro*, fighting |
+|---|---|---|
+| wants | connection, calm extensions, the third and fourth lines | contact, cuts, ataris, whatever is happening right now |
+| fights | when there is something to take | as a matter of course |
+
+One rule overrides all of it: **neither player will fill its own eye.** Without
+that, two heuristic players take their own groups apart in the endgame and the
+board empties out — there is a test for exactly this in
+[`tests/GoRulesTests.cpp`](tests/GoRulesTests.cpp).
+
+**The three settings** sit next to the switch:
+
+- **Game length** — 12 to 160 moves, the ten book moves included. 60 is the
+  default: long enough for a middlegame fight, short enough that the opening
+  comes round again.
+- **Variation** — how far the players stray from the best point they can see.
+  At **0%** they never stray, so the seed stops mattering and the run becomes
+  one game repeating — a strict loop. At **100%** they pick freely among their
+  best twelve, which gets loose and takes fewer stones. **35%**, the default,
+  keeps the play recognisable and makes every game different by around move 11.
+- **Seed** — names the run. The same seed plays the same games in the same
+  order, on any machine and in any host.
+
+All three are read when a game is *written*, which happens one game ahead of
+the one you are hearing. So changing any of them lands on the next game rather
+than cutting the current one short. To start a fresh run immediately, switch
+**AI self-play** off and on again — that always begins at game 1.
+
+**How it shares the board.** Loading an `.sgf`, or pressing **Unload**, hands
+the board back and switches self-play off, so the switch never sits on while
+something else is playing. Changing the board size restarts the run at game 1
+on the new board — the points mean something else now. **Wave Replay** holds a
+run on one game for as long as it is on: the wave is rippling stones that the
+next game would not have played, and swapping the record underneath it would
+cut every echo head off at once.
+
+**Saving.** A generated record is not written into the session — the seed and
+the game number are, and the game is played again from them when the session
+opens. It comes back identical, down to the move you left it on. (This is why
+there is not a single floating-point number in
+[`Source/GoAI.h`](Source/GoAI.h): float arithmetic differs a little between
+compilers, and a single near-tie falling the other way would be a different
+game from that move on.)
+
+**Getting the games out.** The same two players can be run outside the plugin,
+where they write ordinary `.sgf` files you can load back into it, study in a Go
+viewer, or keep:
+
+```powershell
+cmake --build build --config Release --target GoAiDump
+.\build\Release\GoAiDump.exe --games 6 --seed 1 --moves 60 --variation 35 --out sgf\selfplay
+```
+
+![Six games from one opening](docs/mockups/self-play-games.png)
+
 ### Wave Replay
 
 **Wave Replay** is a second way to pace the same game record. Turn it on
@@ -426,6 +509,13 @@ and — separately — the loaded game record and its current scrub position.
 Saving your DAW project (or a plugin preset, if your host supports them)
 recalls the sequencer exactly as you left it, board included.
 
+A self-play run is saved differently, and more cheaply: the record itself is
+not written into the session at all. The **Seed**, the **Game length**, the
+**Variation** and which game of the run was playing are — and the game is
+generated again from those when the session opens, landing on the same move
+with the same stones on the board. That is only sound because the players are
+exactly reproducible; see [AI self-play](#ai-self-play).
+
 ## 12. Building it from source
 
 ### Requirements
@@ -531,11 +621,14 @@ GoSequencer/
 │   ├── PluginProcessor.*   # Audio/MIDI engine: playheads, clock, params, state
 │   ├── PluginEditor.*      # Plugin UI: all sliders/combos/buttons, board layout
 │   ├── BoardComponent.*    # The clickable Go board widget and its painting
+│   ├── GoAI.h              # The two self-play players (no JUCE deps, no floats)
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE deps)
 │   └── SgfParser.h         # Minimal SGF (game record) reader
-├── sgf/                    # Sample game record for trying SGF playback
+├── sgf/                    # Sample game records for trying SGF playback
+├── tools/
+│   └── GoAiDump.cpp        # Runs the two players outside the plugin, writes .sgf
 └── tests/
-    └── GoRulesTests.cpp    # Rules-engine unit test, run via ctest
+    └── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
 ```
 
 For a shorter overview, see [README.md](README.md).

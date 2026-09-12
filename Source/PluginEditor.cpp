@@ -43,6 +43,9 @@ namespace
     //  in the game record section, always present (not a fold out)
     constexpr int waveRowHeight = rowHeight + gap;
 
+    //  the self-play row: the switch and its three settings, likewise permanent
+    constexpr int aiRowHeight = rowHeight + gap;
+
     //  the ValueTree property the open state rides along in, so the fold out is
     //  still open when the session comes back
     const juce::Identifier channelsOpenProperty { "channelsOpen" };
@@ -133,10 +136,22 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setUpSlider (waveGapSlider, waveGapCaption, "wave gap", "waveGap", waveGapAttachment);
     waveGapSlider.setEnabled (processor.waveReplayOn());          //  synced again every tick; this is just the initial state
 
+    //  ---- self-play --------------------------------------------------------
+    //  The record is written rather than loaded, so these sit with the record's
+    //  own controls: Move Rate, Run and Loop drive a generated game exactly as
+    //  they drive a loaded one.
+    setUpToggle (aiPlayButton, "AI self-play", "aiPlay", aiPlayAttachment);
+    setUpSlider (aiMovesSlider, aiMovesCaption, "game length", "aiMoves", aiMovesAttachment);
+    setUpSlider (aiVariationSlider, aiVariationCaption, "variation", "aiVariation", aiVariationAttachment);
+    setUpSlider (aiSeedSlider, aiSeedCaption, "seed", "aiSeed", aiSeedAttachment);
+
+    for (auto* slider : { &aiMovesSlider, &aiVariationSlider, &aiSeedSlider })
+        slider->setEnabled (processor.aiSelfPlay());               //  as above: the tick keeps these in step
+
     unloadButton.setButtonText ("Unload");
     unloadButton.onClick = [this]
     {
-        processor.clearGame();
+        processor.clearGame();          //  a run ends here too: it turns its own switch off
         refreshGameDisplay();
         showMessage ("game record unloaded");
     };
@@ -180,7 +195,8 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     addAndMakeVisible (gameDetailLabel);
 
     for (auto* blank : { &blankCaption1, &blankCaption2, &blankCaption3, &blankCaption4, &blankCaption5,
-                         &blankCaption6, &blankCaption7, &blankCaption8, &blankCaption9, &blankCaption10 })
+                         &blankCaption6, &blankCaption7, &blankCaption8, &blankCaption9, &blankCaption10,
+                         &blankCaption11 })
         addAndMakeVisible (*blank);
 
     //  the separators are UTF-8: JUCE must be told, or they arrive as Latin-1
@@ -194,8 +210,9 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     refreshGameDisplay();
 
     setResizable (true, true);
-    setResizeLimits (660, 922 + waveRowHeight, 1500, 1900 + channelBlockHeight + waveRowHeight);
-    setSize (740, 1042 + waveRowHeight + (channelsOpen() ? channelBlockHeight : 0));
+    setResizeLimits (660, 922 + waveRowHeight + aiRowHeight,
+                     1500, 1900 + channelBlockHeight + waveRowHeight + aiRowHeight);
+    setSize (740, 1042 + waveRowHeight + aiRowHeight + (channelsOpen() ? channelBlockHeight : 0));
 
     refreshChannelSection (false);       //  the window is already the right height
 
@@ -417,9 +434,9 @@ void GoSequencerEditor::resized()
     area.removeFromTop (4);
 
     //  three section headers, six slider rows, the hint and the record's title
-    //  line, the wave replay row, plus the fold out when it is open
+    //  line, the wave replay and self-play rows, plus the fold out when it is open
     auto controls = area.removeFromBottom (3 * sectionHeight + 6 * rowHeight + 10 * gap + 44
-                                             + waveRowHeight
+                                             + waveRowHeight + aiRowHeight
                                              + (channelsOpen() ? channelBlockHeight : 0));
     area.removeFromBottom (8);
 
@@ -528,6 +545,16 @@ void GoSequencerEditor::resized()
     }
 
     {
+        //  the switch and the three numbers a game is written from; the numbers
+        //  are greyed out by timerCallback() while the switch is off
+        auto cells = columns (nextRow (rowHeight), 4);
+        placeLabelled (cells[0], blankCaption11, aiPlayButton);
+        placeLabelled (cells[1], aiMovesCaption, aiMovesSlider);
+        placeLabelled (cells[2], aiVariationCaption, aiVariationSlider);
+        placeLabelled (cells[3], aiSeedCaption, aiSeedSlider);
+    }
+
+    {
         //  Wave Replay ignores Loop, and Wave Gap only means anything once
         //  it's on - timerCallback() greys the slider out the rest of the time
         auto cells = columns (nextRow (rowHeight), 2);
@@ -594,6 +621,24 @@ void GoSequencerEditor::timerCallback()
         //  does - it wraps the record without clearing the board, which is
         //  what keeps the wave running - so that switch stays live.
         waveGapSlider.setEnabled (waveReplay);
+    }
+
+    //  A run replaces its own record every time a game ends, and that happens on
+    //  the audio thread with nothing clicked - so the title line, the position
+    //  slider's range and the enables are read back here rather than only after
+    //  a button.
+    const bool ai = processor.aiSelfPlay();
+    const int aiGame = ai ? processor.aiGameNumber() : -1;
+
+    if (ai != lastAiShown || aiGame != lastAiGameShown)
+    {
+        lastAiShown = ai;
+        lastAiGameShown = aiGame;
+
+        for (auto* slider : { &aiMovesSlider, &aiVariationSlider, &aiSeedSlider })
+            slider->setEnabled (ai);
+
+        refreshGameDisplay();
     }
 
     const int position = processor.gamePosition();

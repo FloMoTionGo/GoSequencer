@@ -154,6 +154,31 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     //  minimum 2, so Stone Life (minimum 1) always has room to sit below it
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "waveGap", 1 }, "Wave Gap", 2, 128, 20));
 
+    //  ---- the two self-play players ----------------------------------------
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "aiPlay", 1 }, "AI Self-Play", false));
+
+    //  a game is the motif plus what the players make of it, so the shortest
+    //  worth having is a little longer than the ten move book
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { "aiMoves", 1 }, "AI Game Length",
+                                                     12, 160, 60,
+                                                     AudioParameterIntAttributes()
+                                                         .withStringFromValueFunction ([] (int v, int)
+                                                         {
+                                                             return String (v) + " mv";
+                                                         })));
+
+    //  0 is one game repeating; 100 is a different middlegame every time
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { "aiVariation", 1 }, "AI Variation",
+                                                     0, 100, 35,
+                                                     AudioParameterIntAttributes()
+                                                         .withStringFromValueFunction ([] (int v, int)
+                                                         {
+                                                             return String (v) + "%";
+                                                         })));
+
+    //  names the run: the same seed is the same games, in the same order
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { "aiSeed", 1 }, "AI Seed", 1, 999, 1));
+
     return layout;
 }
 
@@ -184,6 +209,10 @@ GoSequencerProcessor::GoSequencerProcessor()
     gameLoopParam    = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("gameLoop"));
     waveReplayParam  = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("waveReplay"));
     waveGapParam     = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("waveGap"));
+    aiPlayParam      = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("aiPlay"));
+    aiMovesParam     = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("aiMoves"));
+    aiVariationParam = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("aiVariation"));
+    aiSeedParam      = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("aiSeed"));
 
     for (int h = 0; h < maxHeadChannels; ++h)
         headChannel[(size_t) h] = dynamic_cast<juce::AudioParameterInt*>
@@ -204,6 +233,10 @@ GoSequencerProcessor::GoSequencerProcessor()
     apvts.addParameterListener ("waveReplay", this);
     apvts.addParameterListener ("waveGap", this);
     apvts.addParameterListener ("stoneLife", this);
+    apvts.addParameterListener ("aiPlay", this);
+    apvts.addParameterListener ("aiMoves", this);
+    apvts.addParameterListener ("aiVariation", this);
+    apvts.addParameterListener ("aiSeed", this);
 
     publishBoard();
 }
@@ -214,6 +247,10 @@ GoSequencerProcessor::~GoSequencerProcessor()
     apvts.removeParameterListener ("waveReplay", this);
     apvts.removeParameterListener ("waveGap", this);
     apvts.removeParameterListener ("stoneLife", this);
+    apvts.removeParameterListener ("aiPlay", this);
+    apvts.removeParameterListener ("aiMoves", this);
+    apvts.removeParameterListener ("aiVariation", this);
+    apvts.removeParameterListener ("aiSeed", this);
     cancelPendingUpdate();
 }
 
@@ -478,6 +515,19 @@ void GoSequencerProcessor::parameterChanged (const juce::String& parameterID, fl
         pendingWaveClamp.store (true, std::memory_order_relaxed);
         triggerAsyncUpdate();
     }
+    else if (parameterID == "aiPlay")
+    {
+        pendingAiRestart.store (true, std::memory_order_relaxed);
+        triggerAsyncUpdate();       //  generating a game allocates: not here
+    }
+    else if (parameterID == "aiMoves" || parameterID == "aiVariation" || parameterID == "aiSeed")
+    {
+        //  the game playing is left alone - these are read when one is written,
+        //  so the change arrives with the next game rather than cutting this one
+        //  off partway through
+        pendingAiPrepare.store (true, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    }
 }
 
 void GoSequencerProcessor::handleAsyncUpdate()
@@ -487,6 +537,19 @@ void GoSequencerProcessor::handleAsyncUpdate()
 
     if (pendingWaveClamp.exchange (false, std::memory_order_relaxed))
         clampStoneLifeToWaveGap();
+
+    if (pendingAiRestart.exchange (false, std::memory_order_relaxed))
+    {
+        if (aiPlayParam != nullptr && aiPlayParam->get())
+            startAiSelfPlay (0);
+        else
+            stopAiSelfPlay();
+    }
+
+    //  after the restart, so a switch on does not immediately overwrite the
+    //  second game it just asked for with the same thing
+    if (pendingAiPrepare.exchange (false, std::memory_order_relaxed))
+        prepareNextAiGame();
 }
 
 void GoSequencerProcessor::clampStoneLifeToWaveGap()
@@ -523,12 +586,7 @@ void GoSequencerProcessor::applyBoardSize (int newSize)
         const juce::SpinLock::ScopedLockType sl (boardLock);
 
         if (dropGame)
-        {
-            game = {};
-            sgfText.clear();
-            sourceName.clear();
-            gameMovePosition = 0;
-        }
+            clearGameLocked();
 
         board.setSize (newSize);        //  a different board means different points: it clears
 
@@ -547,6 +605,11 @@ void GoSequencerProcessor::applyBoardSize (int newSize)
     activeSize.store (newSize, std::memory_order_relaxed);
     step.store (0, std::memory_order_relaxed);
     nextAlternating.store ((int) go::Stone::black, std::memory_order_relaxed);
+
+    //  a run cannot carry across a resize - the points mean something else now -
+    //  so it starts again from game 1 on the board it has been given
+    if (dropGame && aiSelfPlay())
+        startAiSelfPlay (0);
 }
 
 //==============================================================================
@@ -573,6 +636,11 @@ juce::String GoSequencerProcessor::loadSgfText (const juce::String& text, const 
     if (! go::isSupportedSize (parsed.size))
         return juce::String (parsed.size) + "x" + juce::String (parsed.size)
              + " records are not supported yet - 9x9 and 13x13 only";
+
+    //  a loaded record takes the board over from the players, and the switch
+    //  goes off with it - checked before anything is written, so a record that
+    //  turns out to be unusable leaves a run untouched
+    releaseAiSelfPlay();
 
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
@@ -609,14 +677,27 @@ juce::String GoSequencerProcessor::loadSgfText (const juce::String& text, const 
     return {};
 }
 
+void GoSequencerProcessor::clearGameLocked()
+{
+    game = {};
+    sgfText.clear();
+    sourceName.clear();
+    gameMovePosition = 0;
+    gameWrapped = false;
+
+    //  whatever was waiting was the next game of a run that is over now
+    aiNextReady = false;
+}
+
 void GoSequencerProcessor::clearGame()
 {
+    //  unloading is also how a run is ended by hand, so the switch has to
+    //  follow: it would otherwise sit on while nothing was playing
+    releaseAiSelfPlay();
+
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
-        game = {};
-        sgfText.clear();
-        sourceName.clear();
-        gameMovePosition = 0;
+        clearGameLocked();
     }
 
     gameMoveTotal.store (0, std::memory_order_relaxed);
@@ -644,6 +725,12 @@ juce::String GoSequencerProcessor::gameDetail() const
     juce::String detail;
     detail << game.size << "x" << game.size << "  " << game.moveCount() << " moves";
 
+    //  a generated game has no result or date to show, but it does have the two
+    //  numbers that name it: which game of the run this is, and its seed
+    if (aiSelfPlay())
+        detail << "  game " << aiGameNumber()
+               << "  seed " << juce::String ((juce::int64) aiSeed());
+
     if (! game.result.empty())
         detail << "  " << juce::String (game.result);
 
@@ -651,6 +738,133 @@ juce::String GoSequencerProcessor::gameDetail() const
         detail << "  " << juce::String (game.date);
 
     return detail;
+}
+
+//==============================================================================
+goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) const
+{
+    goai::Settings settings;
+
+    settings.size      = size;
+    settings.moves     = aiMovesParam     != nullptr ? aiMovesParam->get() : 60;
+    settings.variation = aiVariationParam != nullptr ? aiVariationParam->get() : 35;    // per cent, as the slider reads
+
+    const auto base = (unsigned int) (aiSeedParam != nullptr ? aiSeedParam->get() : 1);
+    settings.seed = goai::gameSeed (base, gameNumber);
+
+    return settings;
+}
+
+void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
+{
+    const int size = (boardSizeParam != nullptr && boardSizeParam->getIndex() == 1) ? 13 : 9;
+    const auto settings = aiSettingsFor (size, gameNumber);
+
+    auto fresh = goai::generate (settings);
+    const int count = fresh.moveCount();
+
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+
+        clearGameLocked();
+        goai::swapGames (game, fresh);
+
+        //  there is no file behind this one, and nothing to write into a saved
+        //  session either: the seed and the game number bring it back exactly
+        sourceName = "AI self-play";
+
+        board.setSize (size);
+        rebuildBoardFromGameLocked (0);
+        publishBoard();
+    }
+
+    aiActive.store (true, std::memory_order_relaxed);
+    aiGameCounter.store (gameNumber, std::memory_order_relaxed);
+    aiSeedShown.store (settings.seed, std::memory_order_relaxed);
+
+    activeSize.store (size, std::memory_order_relaxed);
+    gameMoveTotal.store (count, std::memory_order_relaxed);
+    gamePositionMirror.store (0, std::memory_order_relaxed);
+    step.store (0, std::memory_order_relaxed);
+    gameCountdown = 0.0;
+    nextAlternating.store ((int) go::Stone::black, std::memory_order_relaxed);
+
+    prepareNextAiGame();
+}
+
+void GoSequencerProcessor::stopAiSelfPlay()
+{
+    if (! aiActive.exchange (false, std::memory_order_relaxed))
+        return;         //  something else owns the record now: leave it alone
+
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+        clearGameLocked();
+    }
+
+    //  the stones stay where they are, exactly as Unload leaves them
+    gameMoveTotal.store (0, std::memory_order_relaxed);
+    gamePositionMirror.store (0, std::memory_order_relaxed);
+}
+
+void GoSequencerProcessor::releaseAiSelfPlay()
+{
+    if (! aiActive.exchange (false, std::memory_order_relaxed))
+        return;
+
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+        aiNextReady = false;
+    }
+
+    if (aiPlayParam == nullptr || ! aiPlayParam->get() || settingAiPlayParam)
+        return;
+
+    settingAiPlayParam = true;
+    aiPlayParam->beginChangeGesture();
+    aiPlayParam->setValueNotifyingHost (0.0f);
+    aiPlayParam->endChangeGesture();
+    settingAiPlayParam = false;
+}
+
+void GoSequencerProcessor::prepareNextAiGame()
+{
+    if (! aiSelfPlay())
+        return;
+
+    const int size = activeSize.load (std::memory_order_relaxed);
+    const int number = aiGameCounter.load (std::memory_order_relaxed) + 1;
+    const auto settings = aiSettingsFor (size, number);
+
+    auto next = goai::generate (settings);
+
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+
+        goai::swapGames (aiNextGame, next);
+        aiNextNumber = number;
+        aiNextSeed = settings.seed;
+        aiNextReady = true;
+    }
+
+    //  `next` now holds what aiNextGame held, and frees it here on the message
+    //  thread - which is the whole point of swapping rather than assigning
+}
+
+void GoSequencerProcessor::swapInNextAiGameLocked()
+{
+    goai::swapGames (game, aiNextGame);
+    aiNextReady = false;
+
+    aiGameCounter.store (aiNextNumber, std::memory_order_relaxed);
+    aiSeedShown.store (aiNextSeed, std::memory_order_relaxed);
+    gameMoveTotal.store ((int) game.moves.size(), std::memory_order_relaxed);
+
+    //  a new game starts on an empty board: it is a game, not a continuation
+    resetGameLocked();
+
+    pendingAiPrepare.store (true, std::memory_order_relaxed);
+    triggerAsyncUpdate();
 }
 
 void GoSequencerProcessor::setGamePosition (int position)
@@ -1044,9 +1258,14 @@ void GoSequencerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 
                         //  Wave Replay wraps without clearing: the echo heads
                         //  are mid-record all over the board, and wiping it
-                        //  would cut every one of them off at the loop point
+                        //  would cut every one of them off at the loop point.
+                        //  A run of AI games holds on one game while it is on
+                        //  for the same reason - the wave is rippling stones
+                        //  the next game would not have played.
                         if (waveReplay)
                             wrapGameLocked();
+                        else if (aiNextReady)
+                            swapInNextAiGameLocked();       //  on to the next game of the run
                         else
                             resetGameLocked();
                     }
@@ -1095,6 +1314,11 @@ void GoSequencerProcessor::getStateInformation (juce::MemoryBlock& destData)
         xml->setAttribute ("boardSizeValue", board.size());
         xml->setAttribute ("gamePosition", gameMovePosition);
 
+        //  a generated record is not written out: the seed parameter and this
+        //  number regenerate it exactly, which is cheaper and smaller than
+        //  saving sixty moves that can be derived
+        xml->setAttribute ("aiGame", aiGameCounter.load (std::memory_order_relaxed));
+
         if (sgfText.isNotEmpty())
         {
             xml->setAttribute ("sgfName", sourceName);
@@ -1116,6 +1340,7 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     const auto boardText  = xml->getStringAttribute ("board");
     const int savedSize   = xml->getIntAttribute ("boardSizeValue", 9);
     const int position    = xml->getIntAttribute ("gamePosition", 0);
+    const int savedAiGame = xml->getIntAttribute ("aiGame", 0);
     const int nextColour  = xml->getIntAttribute ("nextColour", (int) go::Stone::black);
     const auto sgfName    = xml->getStringAttribute ("sgfName");
 
@@ -1129,13 +1354,12 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
 
     const int size = go::isSupportedSize (savedSize) ? savedSize : 9;
 
+    aiActive.store (false, std::memory_order_relaxed);       //  the run is restarted below, if there was one
+
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
 
-        game = {};
-        sgfText.clear();
-        sourceName.clear();
-        gameMovePosition = 0;
+        clearGameLocked();
 
         board.setSize (size);
         board.clear();
@@ -1165,6 +1389,19 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     nextAlternating.store (nextColour == (int) go::Stone::white ? (int) go::Stone::white
                                                                 : (int) go::Stone::black,
                            std::memory_order_relaxed);
+
+    //  A saved run comes back by being played again: same seed, same game
+    //  number, same sixty moves, and then the position it was left at. The
+    //  board string restored above is overwritten by that replay, which is
+    //  what makes the two agree.
+    if (aiPlayParam != nullptr && aiPlayParam->get())
+    {
+        startAiSelfPlay (savedAiGame);
+        setGamePosition (position);
+    }
+
+    pendingAiRestart.store (false, std::memory_order_relaxed);
+    pendingAiPrepare.store (false, std::memory_order_relaxed);
 
     cancelPendingUpdate();      //  the size is already where the state wants it
 }

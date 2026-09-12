@@ -6,6 +6,7 @@
 #include <atomic>
 #include <vector>
 
+#include "GoAI.h"
 #include "GoBoard.h"
 #include "SgfParser.h"
 
@@ -188,6 +189,37 @@ public:
     void nudgeGamePosition (int delta) { setGamePosition (gamePosition() + delta); }
 
     //==============================================================================
+    //  AI self-play: the record is written rather than loaded.
+    //
+    //  The two players in GoAI.h play a game out, and what comes back is an
+    //  ordinary record - so Move Rate, Run, Loop, the step buttons, the position
+    //  slider and Wave Replay all go on meaning exactly what they meant for an
+    //  .sgf, and none of them had to learn about this.
+    //
+    //  Every game opens on the same ten book moves and diverges from the first
+    //  move after: the sequencer reads position as pitch, so that is a fixed
+    //  motif followed by a variation on it, once per game.
+    //
+    //  Threading. Generating a game allocates, so it only ever happens on the
+    //  message thread, one game ahead of the one being played. When the record
+    //  runs out under Loop, the audio thread swaps the waiting game in - a
+    //  member-wise swap of two records, which is a handful of pointer exchanges
+    //  and no heap traffic (goai::swapGames) - and asks the message thread for
+    //  the next one. If that request has not been answered by the time the game
+    //  ends, nothing breaks: the record simply repeats, as it would have before.
+    //
+    //  Length, Variation and Seed are read when a game is generated, so a change
+    //  to any of them lands on the next game rather than interrupting this one.
+    //  Switching AI Self-Play off and on starts a fresh run from game 1.
+
+    bool aiSelfPlay()   const noexcept { return aiActive.load (std::memory_order_relaxed); }
+
+    /** Which game of the run is playing, counted from 1, and the seed it was
+        generated from - the pair that names it exactly. */
+    int  aiGameNumber() const noexcept { return aiGameCounter.load (std::memory_order_relaxed) + 1; }
+    unsigned int aiSeed() const noexcept { return aiSeedShown.load (std::memory_order_relaxed); }
+
+    //==============================================================================
     //  Wave Replay: an alternative pacing for game record playback. Advance
     //  never pauses - every move still lands on its own Move Rate tick - but
     //  every waveGap moves after a move first landed, whatever currently sits
@@ -288,6 +320,34 @@ private:
         point still echoing an earlier move - see the class doc above. */
     void applyWaveEchoesLocked (int movesPlaced);
 
+    //  ---- AI self-play, message thread unless noted ------------------------
+    /** The settings a game is generated from: the three parameters, plus the
+        seed that game number turns into. */
+    goai::Settings aiSettingsFor (int size, int gameNumber) const;
+
+    /** Starts a run at this game number: generates it, puts it on the board,
+        and asks for the one after it. */
+    void startAiSelfPlay (int gameNumber);
+
+    /** The switch going off: the run ends and its record is unloaded. Does
+        nothing if the record on the board is not one of ours. */
+    void stopAiSelfPlay();
+
+    /** Hands the board back to whatever is taking over - a loaded .sgf, an
+        unload - without clearing the record that replaced ours. Turns the
+        parameter off too, so the switch tells the truth. */
+    void releaseAiSelfPlay();
+
+    /** Generates the game after the one playing, into aiNextGame. */
+    void prepareNextAiGame();
+
+    /** Audio thread: puts the waiting game on the board. Expects boardLock, and
+        must not allocate - see the note above. */
+    void swapInNextAiGameLocked();
+
+    /** Drops the record, leaving the board as it stands. Expects boardLock. */
+    void clearGameLocked();
+
     /** Keeps Stone Life below Wave Gap while Wave Replay is on, so a reset
         is always something a stone would otherwise have missed. Message
         thread only (routed there via handleAsyncUpdate, since the parameter
@@ -300,6 +360,13 @@ private:
     sgf::Game game;
     juce::String sgfText, sourceName;
     int gameMovePosition = 0;                      // guarded by boardLock
+
+    //  the game after the one playing, generated in advance so the swap at the
+    //  end of a game costs the audio thread nothing
+    sgf::Game aiNextGame;                          // guarded by boardLock
+    bool aiNextReady = false;                      // guarded by boardLock
+    int aiNextNumber = 0;                          // guarded by boardLock
+    unsigned int aiNextSeed = 0;                   // guarded by boardLock
     //  set once the record has wrapped at least once under Wave Replay, so echo
     //  sources may reach back past move 1 into the tail of the record - before
     //  that there is no earlier pass for them to find. Cleared by any rebuild.
@@ -367,12 +434,28 @@ private:
     juce::AudioParameterBool*   waveReplayParam  = nullptr;
     juce::AudioParameterInt*    waveGapParam     = nullptr;
 
+    juce::AudioParameterBool*   aiPlayParam      = nullptr;
+    juce::AudioParameterInt*    aiMovesParam     = nullptr;
+    juce::AudioParameterInt*    aiVariationParam = nullptr;
+    juce::AudioParameterInt*    aiSeedParam      = nullptr;
+
     //  re-entrancy guard: clampStoneLifeToWaveGap() sets stoneLifeParam,
     //  which would otherwise trigger parameterChanged() straight back into it
     bool clampingWaveParams = false;
 
+    //  the same, for releaseAiSelfPlay() writing aiPlayParam
+    bool settingAiPlayParam = false;
+
+    //  true while the record on the board is one the players wrote, which is
+    //  what tells the audio thread it may swap the next game in at the wrap
+    std::atomic<bool> aiActive { false };
+    std::atomic<int>  aiGameCounter { 0 };
+    std::atomic<unsigned int> aiSeedShown { 0 };
+
     std::atomic<bool> pendingBoardSizeChange { false };
     std::atomic<bool> pendingWaveClamp       { false };
+    std::atomic<bool> pendingAiRestart       { false };
+    std::atomic<bool> pendingAiPrepare       { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerProcessor)
 };

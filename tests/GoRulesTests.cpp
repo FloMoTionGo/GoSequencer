@@ -3,6 +3,7 @@
 //      g++ -std=c++17 -I../Source GoRulesTests.cpp -o tests
 //  An SGF path may be passed as argv[1] to check a real game record as well.
 
+#include "GoAI.h"
 #include "GoBoard.h"
 #include "SgfParser.h"
 
@@ -577,6 +578,232 @@ namespace
         std::printf ("        %d stones left standing, %d black and %d white captured\n",
                      board.stoneCount(), board.capturedBlack(), board.capturedWhite());
     }
+
+    //==============================================================================
+    //  The two self-play players. What is checked here is not how well they play -
+    //  that is a matter of taste, and the weights are there to be tuned - but the
+    //  things the plugin relies on: the book opening is always there, every move is
+    //  legal, the board does not dissolve, a seed names a game exactly, and swapping
+    //  a finished game in never touches the heap.
+
+    goai::Settings aiSettings (int size, int moves, int variation, std::uint32_t seed)
+    {
+        goai::Settings s;
+        s.size = size;
+        s.moves = moves;
+        s.variation = variation;
+        s.seed = seed;
+        return s;
+    }
+
+    /** Replays a generated record on a fresh board under the strict rules and
+        says how many moves were refused. */
+    int refusedMoves (const sgf::Game& game)
+    {
+        go::Board board (game.size);
+        int refused = 0;
+
+        for (const auto& move : game.moves)
+            if (board.play (move.index, move.colour, false, true) != MoveResult::ok)
+                ++refused;
+
+        return refused;
+    }
+
+    void testAiOpening()
+    {
+        std::printf ("self-play: the book opening\n");
+
+        const auto& book = goai::openingMoves (9);
+        check (book.size() == 10, "ten book moves on a 9x9");
+        check (goai::openingMoves (13).size() == 10, "ten on a 13x13");
+
+        bool everyGameOpensOnIt = true, coloursAlternate = true;
+
+        for (int seed = 1; seed <= 12; ++seed)
+        {
+            const auto game = goai::generate (aiSettings (9, 60, 60, (std::uint32_t) seed * 7919u));
+
+            for (size_t i = 0; i < book.size(); ++i)
+                if (game.moves[i].index != go::index (book[i].first, book[i].second, 9))
+                    everyGameOpensOnIt = false;
+
+            for (size_t i = 0; i < game.moves.size(); ++i)
+                if (game.moves[i].colour != (i % 2 == 0 ? Stone::black : Stone::white))
+                    coloursAlternate = false;
+        }
+
+        check (everyGameOpensOnIt, "twelve games, all ten book moves, whatever the seed");
+        check (coloursAlternate, "black and white alternate throughout");
+
+        //  and the book is the record it says it is: the first ten moves of
+        //  sgf/nine_dan_9x9_43610191.sgf, which opens on tengen
+        check (book[0] == std::make_pair (4, 4), "the book opens on tengen");
+    }
+
+    void testAiLegalityAndLength()
+    {
+        std::printf ("self-play: legality and length\n");
+
+        bool rightLength = true, allLegal = true, noRepeats = true;
+
+        for (int seed = 1; seed <= 8; ++seed)
+        {
+            const auto game = goai::generate (aiSettings (9, 60, 35, (std::uint32_t) seed * 104729u));
+
+            if (game.moveCount() != 60)
+                rightLength = false;
+
+            if (refusedMoves (game) != 0)
+                allLegal = false;
+
+            //  a point may be played twice in one game - the first stone can be
+            //  captured in between - but never twice running
+            for (size_t i = 1; i < game.moves.size(); ++i)
+                if (game.moves[i].index == game.moves[i - 1].index)
+                    noRepeats = false;
+        }
+
+        check (rightLength, "eight games, sixty moves each");
+        check (allLegal, "every move legal under no-suicide and ko");
+        check (noRepeats, "no move lands on the point just played");
+
+        const auto shortGame = goai::generate (aiSettings (9, 12, 35, 5u));
+        check (shortGame.moveCount() == 12, "a twelve move game is twelve moves");
+
+        const auto big = goai::generate (aiSettings (13, 80, 35, 11u));
+        check (big.size == 13 && big.moveCount() == 80, "13x13, eighty moves");
+        check (refusedMoves (big) == 0, "every 13x13 move legal too");
+    }
+
+    void testAiKeepsTheBoardAlive()
+    {
+        std::printf ("self-play: the board does not dissolve\n");
+
+        //  Without the "never fill your own eye" rule both players take their own
+        //  groups apart and the board empties. This is the check that would catch
+        //  it: a sixty move game leaves most of its stones standing, and both
+        //  colours are still on the board.
+        int fewestStanding = 81, fewestBlack = 81, fewestWhite = 81;
+        bool anythingCaptured = false;
+
+        for (int seed = 1; seed <= 8; ++seed)
+        {
+            const auto game = goai::generate (aiSettings (9, 60, 50, (std::uint32_t) seed * 2654435761u));
+
+            go::Board board (9);
+
+            for (const auto& move : game.moves)
+                board.play (move.index, move.colour, false, true);
+
+            int black = 0, white = 0;
+
+            for (int i = 0; i < board.cellCount(); ++i)
+            {
+                if (board.at (i) == Stone::black) ++black;
+                else if (board.at (i) == Stone::white) ++white;
+            }
+
+            fewestStanding = std::min (fewestStanding, black + white);
+            fewestBlack = std::min (fewestBlack, black);
+            fewestWhite = std::min (fewestWhite, white);
+
+            if (board.capturedBlack() + board.capturedWhite() > 0)
+                anythingCaptured = true;
+        }
+
+        check (fewestStanding >= 30, "at least thirty stones still standing after sixty moves");
+        check (fewestBlack >= 8 && fewestWhite >= 8, "neither colour is wiped out");
+        check (anythingCaptured, "stones do get captured");
+    }
+
+    void testAiDeterminism()
+    {
+        std::printf ("self-play: a seed names a game\n");
+
+        const auto a = goai::generate (aiSettings (9, 60, 50, 12345u));
+        const auto b = goai::generate (aiSettings (9, 60, 50, 12345u));
+        const auto c = goai::generate (aiSettings (9, 60, 50, 12346u));
+
+        bool same = a.moveCount() == b.moveCount(), differs = false;
+
+        for (int i = 0; i < a.moveCount(); ++i)
+        {
+            if (a.moves[(size_t) i].index != b.moves[(size_t) i].index) same = false;
+            if (a.moves[(size_t) i].index != c.moves[(size_t) i].index) differs = true;
+        }
+
+        check (same, "the same seed plays the same game");
+        check (differs, "a different seed plays a different one");
+
+        //  variation 0 is the other end of the knob: the best point every time,
+        //  so the seed stops mattering and a run is one game repeating
+        const auto flat1 = goai::generate (aiSettings (9, 60, 0, 1u));
+        const auto flat2 = goai::generate (aiSettings (9, 60, 0, 999u));
+
+        bool identical = flat1.moveCount() == flat2.moveCount();
+
+        for (int i = 0; i < flat1.moveCount() && identical; ++i)
+            identical = flat1.moves[(size_t) i].index == flat2.moves[(size_t) i].index;
+
+        check (identical, "variation 0 plays one game whatever the seed");
+
+        //  and the divergence starts where it should: after the book, never inside it
+        const auto x = goai::generate (aiSettings (9, 60, 80, 77u));
+        const auto y = goai::generate (aiSettings (9, 60, 80, 78u));
+
+        int firstDifference = x.moveCount();
+
+        for (int i = 0; i < x.moveCount(); ++i)
+            if (x.moves[(size_t) i].index != y.moves[(size_t) i].index) { firstDifference = i; break; }
+
+        check (firstDifference >= 10, "two games never differ inside the opening");
+    }
+
+    void testAiGameSeeds()
+    {
+        std::printf ("self-play: the seeds of a run\n");
+
+        std::array<std::uint32_t, 16> seeds {};
+        bool allDifferent = true;
+
+        for (int i = 0; i < 16; ++i)
+        {
+            seeds[(size_t) i] = goai::gameSeed (7u, i);
+
+            for (int j = 0; j < i; ++j)
+                if (seeds[(size_t) j] == seeds[(size_t) i])
+                    allDifferent = false;
+        }
+
+        check (allDifferent, "sixteen games of a run, sixteen different seeds");
+        check (goai::gameSeed (7u, 3) == goai::gameSeed (7u, 3), "and the run is repeatable");
+        check (goai::gameSeed (7u, 3) != goai::gameSeed (8u, 3), "neighbouring runs do not overlap");
+    }
+
+    void testAiSwapIsAllocationFree()
+    {
+        std::printf ("self-play: swapping a game in\n");
+
+        //  The audio thread swaps the waiting game onto the board. That is only
+        //  safe because every member swap is a pointer exchange, so this checks
+        //  that the buffers really do change hands rather than their contents
+        //  being copied over.
+        auto a = goai::generate (aiSettings (9, 40, 40, 3u));
+        auto b = goai::generate (aiSettings (9, 60, 40, 4u));
+
+        const auto* aData = a.moves.data();
+        const auto* bData = b.moves.data();
+        const int aCount = a.moveCount(), bCount = b.moveCount();
+        const int aFirst = a.moves[0].index;
+
+        goai::swapGames (a, b);
+
+        check (a.moves.data() == bData && b.moves.data() == aData, "the move buffers changed hands");
+        check (a.moveCount() == bCount && b.moveCount() == aCount, "and took their lengths with them");
+        check (b.moves[0].index == aFirst, "the game that was playing is intact on the other side");
+        check (b.blackRank == "territorial" && b.whiteRank == "fighting", "and so are the players' names");
+    }
 }
 
 int main (int argc, char** argv)
@@ -600,6 +827,13 @@ int main (int argc, char** argv)
     testSgfBasics();
     testSgfPassesAndSetup();
     testSgfFailures();
+
+    testAiOpening();
+    testAiLegalityAndLength();
+    testAiKeepsTheBoardAlive();
+    testAiDeterminism();
+    testAiGameSeeds();
+    testAiSwapIsAllocationFree();
 
     if (argc > 1)
         testSgfFile (argv[1]);
