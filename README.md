@@ -11,7 +11,7 @@ shaped as a MIDI instrument: it emits notes rather than making sound itself,
 so you route its MIDI output to a synth or sampler in your DAW.
 
 For a complete, tutorial-style walkthrough of every control and behaviour,
-see **[INSTRUCTIONS.md](INSTRUCTIONS.md)**. This README is the quick
+see **[how-to-use-it.md](how-to-use-it.md)**. This README is the quick
 overview.
 
 ## Table of contents
