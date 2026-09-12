@@ -232,6 +232,33 @@ While a game is running, its moves are placed onto the board using the
 *same* rules engine as manual clicks (captures, etc. all apply), so
 captures from the real game show up in the header's capture tally too.
 
+### Wave Replay
+
+**Wave Replay** is a second way to pace the same game record. Turn it on
+and playback never pauses — moves still land one at a time on **Move
+Rate**, straight through to the end — but every **Wave Gap** moves *after*
+a move first landed, whatever currently occupies that same point gets its
+own individual lifespan reset, as if it had just been placed. A move born
+at tick 5 gets refreshed at tick 5 + Wave Gap, again at 5 + 2×Wave Gap, and
+so on (up to 16 refreshes deep). Because different moves are born on
+different ticks, their resets land on different ticks too — the effect
+ripples across the board one stone at a time rather than the whole board
+flashing back to life together.
+
+Two things follow from that:
+
+- **Stone Life is kept below Wave Gap.** If a stone could already outlive
+  a whole Wave Gap on its own, its reset would be a no-op — the wave
+  wouldn't be audible. So while Wave Replay is on, raising **Stone Life**
+  past **Wave Gap − 1** pulls it back down automatically, and **Wave Gap**
+  can't go below 2 (Stone Life's own minimum is 1, so it always needs
+  room underneath).
+- **Loop is ignored** while Wave Replay is on — the record plays through
+  once and holds at the end, the same way ordinary replay holds when Loop
+  is off. Wave Replay's resets are keyed to a move's own position in the
+  record, so restarting the record from move 0 mid-stream would scramble
+  which move a given reset is echoing.
+
 ## 7. Playhead modes explained in depth
 
 Set with **Mode**. A "playhead" is an invisible marker stepping through

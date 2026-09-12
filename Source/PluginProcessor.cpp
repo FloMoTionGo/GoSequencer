@@ -149,6 +149,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "gameRun", 1 }, "Run Game", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "gameLoop", 1 }, "Loop Game", true));
 
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "waveReplay", 1 }, "Wave Replay", false));
+
+    //  minimum 2, so Stone Life (minimum 1) always has room to sit below it
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { "waveGap", 1 }, "Wave Gap", 2, 128, 20));
+
     return layout;
 }
 
@@ -177,6 +182,8 @@ GoSequencerProcessor::GoSequencerProcessor()
     gameRateParam    = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("gameRate"));
     gameRunParam     = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("gameRun"));
     gameLoopParam    = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("gameLoop"));
+    waveReplayParam  = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("waveReplay"));
+    waveGapParam     = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("waveGap"));
 
     for (int h = 0; h < maxHeadChannels; ++h)
         headChannel[(size_t) h] = dynamic_cast<juce::AudioParameterInt*>
@@ -194,6 +201,9 @@ GoSequencerProcessor::GoSequencerProcessor()
     }
 
     apvts.addParameterListener ("boardSize", this);
+    apvts.addParameterListener ("waveReplay", this);
+    apvts.addParameterListener ("waveGap", this);
+    apvts.addParameterListener ("stoneLife", this);
 
     publishBoard();
 }
@@ -201,6 +211,9 @@ GoSequencerProcessor::GoSequencerProcessor()
 GoSequencerProcessor::~GoSequencerProcessor()
 {
     apvts.removeParameterListener ("boardSize", this);
+    apvts.removeParameterListener ("waveReplay", this);
+    apvts.removeParameterListener ("waveGap", this);
+    apvts.removeParameterListener ("stoneLife", this);
     cancelPendingUpdate();
 }
 
@@ -456,12 +469,47 @@ void GoSequencerProcessor::clearBoard()
 void GoSequencerProcessor::parameterChanged (const juce::String& parameterID, float)
 {
     if (parameterID == "boardSize")
+    {
+        pendingBoardSizeChange.store (true, std::memory_order_relaxed);
         triggerAsyncUpdate();       //  the change may arrive on the audio thread
+    }
+    else if (parameterID == "waveReplay" || parameterID == "waveGap" || parameterID == "stoneLife")
+    {
+        pendingWaveClamp.store (true, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    }
 }
 
 void GoSequencerProcessor::handleAsyncUpdate()
 {
-    applyBoardSize (boardSizeParam != nullptr && boardSizeParam->getIndex() == 1 ? 13 : 9);
+    if (pendingBoardSizeChange.exchange (false, std::memory_order_relaxed))
+        applyBoardSize (boardSizeParam != nullptr && boardSizeParam->getIndex() == 1 ? 13 : 9);
+
+    if (pendingWaveClamp.exchange (false, std::memory_order_relaxed))
+        clampStoneLifeToWaveGap();
+}
+
+void GoSequencerProcessor::clampStoneLifeToWaveGap()
+{
+    if (clampingWaveParams)
+        return;
+
+    if (waveReplayParam == nullptr || waveGapParam == nullptr || stoneLifeParam == nullptr)
+        return;
+
+    if (! waveReplayParam->get())
+        return;
+
+    const int maxLife = juce::jmax (1, waveGapParam->get() - 1);
+
+    if (stoneLifeParam->get() <= maxLife)
+        return;
+
+    clampingWaveParams = true;
+    stoneLifeParam->beginChangeGesture();
+    stoneLifeParam->setValueNotifyingHost (stoneLifeParam->convertTo0to1 ((float) maxLife));
+    stoneLifeParam->endChangeGesture();
+    clampingWaveParams = false;
 }
 
 void GoSequencerProcessor::applyBoardSize (int newSize)
@@ -659,6 +707,39 @@ bool GoSequencerProcessor::advanceGameLocked()
 
     ++gameMovePosition;
     return true;
+}
+
+void GoSequencerProcessor::applyWaveEchoesLocked (int movesPlaced)
+{
+    if (waveGapParam == nullptr)
+        return;
+
+    const int gap = waveGapParam->get();
+
+    if (gap < 1)
+        return;
+
+    const long long now = ageClock.load (std::memory_order_relaxed);
+
+    //  echo k reaches, on this move, the point that move (movesPlaced - k*gap)
+    //  touched when IT landed. Different moves were born on different ticks,
+    //  so each echo level lands on a different move - never all at once.
+    for (int k = 1; k <= maxWaveEchoes; ++k)
+    {
+        const int sourceMove = movesPlaced - k * gap;
+
+        if (sourceMove < 1)
+            break;
+
+        const auto& mv = game.moves[(size_t) (sourceMove - 1)];
+
+        if (mv.isPass || board.at (mv.index) == go::Stone::none)
+            continue;
+
+        bornAt[(size_t) mv.index].store (now, std::memory_order_relaxed);
+        placedAt[(size_t) mv.index].store (placeCounter.fetch_add (1, std::memory_order_relaxed) + 1,
+                                           std::memory_order_relaxed);
+    }
 }
 
 //==============================================================================
@@ -917,17 +998,26 @@ void GoSequencerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
             {
                 int guard = 0;
 
+                const bool waveReplay = waveReplayParam != nullptr && waveReplayParam->get();
+
                 while (gameCountdown <= 0.0 && ++guard < 512)
                 {
                     if (! advanceGameLocked())
                     {
-                        if (! gameLoopParam->get())
+                        //  Wave Replay ignores Loop: its echoes are keyed to a
+                        //  move's own position in the record, so the game
+                        //  plays once through and holds at the end
+                        if (waveReplay || ! gameLoopParam->get())
                         {
                             gameCountdown = samplesPerMove;     //  hold on the final position
                             break;
                         }
 
                         resetGameLocked();
+                    }
+                    else if (waveReplay)
+                    {
+                        applyWaveEchoesLocked (gameMovePosition);
                     }
 
                     //  per move rather than once at the end of the catch up: a
@@ -1000,6 +1090,7 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
         savedSgf = child->getAllSubText();
 
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
+    clampStoneLifeToWaveGap();      //  belt and suspenders: a saved session's own values might predate the rule
 
     const int size = go::isSupportedSize (savedSize) ? savedSize : 9;
 

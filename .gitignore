@@ -22,3 +22,5 @@ Thumbs.db
 # Compiled test binary
 tests/*.exe
 tests/*.o
+ideas.md
+sgf/*

@@ -39,6 +39,10 @@ namespace
     //  what opening the channel fold out adds: two rows of sliders
     constexpr int channelBlockHeight = 2 * (rowHeight + gap);
 
+    //  the Wave Replay toggle + Wave Gap slider: one permanent extra row
+    //  in the game record section, always present (not a fold out)
+    constexpr int waveRowHeight = rowHeight + gap;
+
     //  the ValueTree property the open state rides along in, so the fold out is
     //  still open when the session comes back
     const juce::Identifier channelsOpenProperty { "channelsOpen" };
@@ -125,6 +129,10 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setUpToggle (runGameButton, "Run game", "gameRun", runGameAttachment);
     setUpToggle (loopGameButton, "Loop", "gameLoop", loopGameAttachment);
 
+    setUpToggle (waveReplayButton, "Wave replay", "waveReplay", waveReplayAttachment);
+    setUpSlider (waveGapSlider, waveGapCaption, "wave gap", "waveGap", waveGapAttachment);
+    waveGapSlider.setEnabled (processor.waveReplayOn());          //  synced again every tick; this is just the initial state
+
     unloadButton.setButtonText ("Unload");
     unloadButton.onClick = [this]
     {
@@ -172,7 +180,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     addAndMakeVisible (gameDetailLabel);
 
     for (auto* blank : { &blankCaption1, &blankCaption2, &blankCaption3, &blankCaption4, &blankCaption5,
-                         &blankCaption6, &blankCaption7, &blankCaption8, &blankCaption9 })
+                         &blankCaption6, &blankCaption7, &blankCaption8, &blankCaption9, &blankCaption10 })
         addAndMakeVisible (*blank);
 
     //  the separators are UTF-8: JUCE must be told, or they arrive as Latin-1
@@ -186,8 +194,8 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     refreshGameDisplay();
 
     setResizable (true, true);
-    setResizeLimits (660, 922, 1500, 1900 + channelBlockHeight);
-    setSize (740, 1042 + (channelsOpen() ? channelBlockHeight : 0));
+    setResizeLimits (660, 922 + waveRowHeight, 1500, 1900 + channelBlockHeight + waveRowHeight);
+    setSize (740, 1042 + waveRowHeight + (channelsOpen() ? channelBlockHeight : 0));
 
     refreshChannelSection (false);       //  the window is already the right height
 
@@ -409,8 +417,9 @@ void GoSequencerEditor::resized()
     area.removeFromTop (4);
 
     //  three section headers, six slider rows, the hint and the record's title
-    //  line, plus the fold out when it is open
+    //  line, the wave replay row, plus the fold out when it is open
     auto controls = area.removeFromBottom (3 * sectionHeight + 6 * rowHeight + 10 * gap + 44
+                                             + waveRowHeight
                                              + (channelsOpen() ? channelBlockHeight : 0));
     area.removeFromBottom (8);
 
@@ -519,6 +528,14 @@ void GoSequencerEditor::resized()
     }
 
     {
+        //  Wave Replay ignores Loop, and Wave Gap only means anything once
+        //  it's on - timerCallback() greys the slider out the rest of the time
+        auto cells = columns (nextRow (rowHeight), 2);
+        placeLabelled (cells[0], blankCaption10, waveReplayButton);
+        placeLabelled (cells[1], waveGapCaption, waveGapSlider);
+    }
+
+    {
         auto row = nextRow (rowHeight);
         auto sliderCell = row.removeFromLeft (row.getWidth() / 2).withTrimmedRight (10);
         placeLabelled (sliderCell, moveCaption, moveSlider);
@@ -565,6 +582,19 @@ void GoSequencerEditor::timerCallback()
 
         for (int h = 0; h < headChannels; ++h)
             headChannelSliders[(size_t) h].setEnabled (multi && h < heads);
+    }
+
+    const bool waveReplay = processor.waveReplayOn();
+
+    if (waveReplay != lastWaveReplayShown)
+    {
+        lastWaveReplayShown = waveReplay;
+
+        //  Wave Gap only means anything once Wave Replay is on; Loop is
+        //  ignored while it is, so grey that switch out too rather than let
+        //  it look like it still has a say
+        waveGapSlider.setEnabled (waveReplay);
+        loopGameButton.setEnabled (! waveReplay);
     }
 
     const int position = processor.gamePosition();

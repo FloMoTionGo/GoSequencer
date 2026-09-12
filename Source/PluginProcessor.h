@@ -165,6 +165,7 @@ public:
     int  lastMove()       const noexcept { return lastMoveIndex.load (std::memory_order_relaxed); }
     int  currentStep()    const noexcept { return step.load (std::memory_order_relaxed); }
     bool isRunning()      const noexcept { return running.load (std::memory_order_relaxed); }
+    bool waveReplayOn()   const noexcept { return waveReplayParam != nullptr && waveReplayParam->get(); }
 
     //==============================================================================
     //  Game records. Message thread only, except the two atomics.
@@ -185,6 +186,25 @@ public:
     /** Scrubs the record: the board is rebuilt from the start up to this move. */
     void setGamePosition (int position);
     void nudgeGamePosition (int delta) { setGamePosition (gamePosition() + delta); }
+
+    //==============================================================================
+    //  Wave Replay: an alternative pacing for game record playback. Advance
+    //  never pauses - every move still lands on its own Move Rate tick - but
+    //  every waveGap moves after a move first landed, whatever currently sits
+    //  on that point has its lifespan reset, as if it had just been placed.
+    //  Different moves are born on different ticks, so their resets land on
+    //  different ticks too: the effect ripples across the board one stone at
+    //  a time rather than pulsing the whole board together. Loop is ignored
+    //  while this is on - the game plays once through and holds at the end.
+    //
+    //  Stone Life is kept below Wave Gap (see clampStoneLifeToWaveGap()): a
+    //  stone that could outlive a whole gap on its own would make its reset
+    //  a no-op, and the wave would stop being audible.
+    //
+    //  Capped at maxWaveEchoes levels deep (move T's point is refreshed by
+    //  echo k while T - k*waveGap >= 1, for k up to the cap) - a real-time
+    //  bound, since the game-advance loop can run many times per audio block.
+    static constexpr int maxWaveEchoes = 16;
 
     juce::AudioProcessorValueTreeState apvts;
 
@@ -243,10 +263,20 @@ private:
     void flushNoteOffs (juce::MidiBuffer& midi, int numSamples);
     void allNotesOff (juce::MidiBuffer& midi, int offsetInBlock);
 
-    //  these three expect boardLock to be held
+    //  these expect boardLock to be held
     void resetGameLocked();
     bool advanceGameLocked();
     void rebuildBoardFromGameLocked (int position);
+    /** Wave Replay: after movesPlaced (gameMovePosition, just advanced past
+        the move that landed on this tick) has been reached, refreshes every
+        point still echoing an earlier move - see the class doc above. */
+    void applyWaveEchoesLocked (int movesPlaced);
+
+    /** Keeps Stone Life below Wave Gap while Wave Replay is on, so a reset
+        is always something a stone would otherwise have missed. Message
+        thread only (routed there via handleAsyncUpdate, since the parameter
+        change that asks for this can arrive on the audio thread). */
+    void clampStoneLifeToWaveGap();
 
     go::Board board { 9 };
     juce::SpinLock boardLock;
@@ -313,6 +343,16 @@ private:
 
     juce::AudioParameterBool*   gameRunParam     = nullptr;
     juce::AudioParameterBool*   gameLoopParam    = nullptr;
+
+    juce::AudioParameterBool*   waveReplayParam  = nullptr;
+    juce::AudioParameterInt*    waveGapParam     = nullptr;
+
+    //  re-entrancy guard: clampStoneLifeToWaveGap() sets stoneLifeParam,
+    //  which would otherwise trigger parameterChanged() straight back into it
+    bool clampingWaveParams = false;
+
+    std::atomic<bool> pendingBoardSizeChange { false };
+    std::atomic<bool> pendingWaveClamp       { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerProcessor)
 };

@@ -106,6 +106,11 @@ real game onto the board:
 - A sample game is included at
   [`sgf/89706031-145-Gruener123-FloMo.sgf`](sgf/89706031-145-Gruener123-FloMo.sgf)
   to try this with.
+- **Wave Replay** is a second pacing option: playback never pauses, but
+  every **Wave Gap** moves after a move first landed, whatever's currently
+  on that point gets its own lifespan reset — staggered per stone rather
+  than a synchronized pulse. See
+  [how-to-use-it.md](how-to-use-it.md#wave-replay) for the full mechanics.
 
 ## Using it in Ableton Live
 
