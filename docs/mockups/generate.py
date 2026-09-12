@@ -446,13 +446,14 @@ def mock_combo(d, x, y, w, caption, value_text, enabled=True):
     d.line([s(cx - 5), s(cy - 3), s(cx), s(cy + 3), s(cx + 5), s(cy - 3)], fill=DIM, width=sw(1.6), joint="curve")
 
 
-def mock_toggle(d, x, y, w, caption, on):
+def mock_toggle(d, x, y, w, caption, on, enabled=True):
     ty = y + 18
-    if on:
+    if on and enabled:
         rrect(d, (x, ty, x + w, ty + 24), 5, fill=ACCENT)
     else:
         rrect(d, (x, ty, x + w, ty + 24), 5, fill=PANEL_BRIGHT, outline=(0x3a, 0x38, 0x44), width=1)
-    text(d, (x + w / 2, ty + 12), caption, font(10.8, bold=on), fill=(0xff, 0xff, 0xff) if on else DIM, anchor="mm")
+    label_fill = (0xff, 0xff, 0xff) if (on and enabled) else ((0x5a, 0x58, 0x62) if not enabled else DIM)
+    text(d, (x + w / 2, ty + 12), caption, font(10.8, bold=(on and enabled)), fill=label_fill, anchor="mm")
 
 
 def section_header(d, x, y, text_str):
@@ -532,7 +533,7 @@ def mockup_channels_foldout():
 
 def mockup_game_record():
     W, H = 320, 300
-    W2, H2 = 760, 300
+    W2, H2 = 760, 362
     img, d = new_canvas(W2, H2)
     x0 = 20
     rrect(d, (14, 14, W2 - 14, H2 - 14), 8, fill=PANEL)
@@ -546,7 +547,12 @@ def mockup_game_record():
     mock_toggle(d, x0, y, colw, "Load SGF\u2026", False)
     mock_combo(d, x0 + colw + 16, y, colw, "move rate", "1 bar")
     mock_toggle(d, x0 + 2 * (colw + 16), y, colw, "Run game", True)
-    mock_toggle(d, x0 + 3 * (colw + 16), y, colw, "Loop", False)
+    mock_toggle(d, x0 + 3 * (colw + 16), y, colw, "Loop", False, enabled=False)
+
+    y += 62
+    half_w = (W2 - 28) / 2 - 10
+    mock_toggle(d, x0, y, half_w, "Wave replay", True)
+    mock_slider(d, x0 + half_w + 20, y, half_w, "wave gap", "20")
 
     y += 62
     slider_w = (W2 - 28) / 2 - 10
