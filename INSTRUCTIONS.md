@@ -5,6 +5,13 @@ Sequencer plugin, plus how to build it from source. For a quick overview and
 a one-page control table, see [README.md](README.md) — this document goes
 deeper into *how* and *why* each feature behaves the way it does.
 
+> The screenshots below are mockups — illustrative recreations of the
+> plugin's actual dark theme and layout (built from the same colours and
+> geometry as [`Source/BoardComponent.h`](Source/BoardComponent.h) /
+> [`Source/GoBoard.h`](Source/GoBoard.h)), generated with
+> [`docs/mockups/generate.py`](docs/mockups/generate.py) rather than
+> captured from a running build.
+
 ## Table of contents
 
 1. [First launch](#1-first-launch)
@@ -91,11 +98,15 @@ in the header for about 4–5 seconds, in the accent colour.
 | **Right-click**, or **Shift-click**, or **Alt-click** any point | Also lifts a stone if one is there (an alternate gesture for the same eraser, useful if your right-click is bound elsewhere). |
 | Attempt an illegal move (suicide, ko, occupied point) | Nothing is placed; the point **flashes red** briefly and an explanation appears in the header (e.g. *"ko: that would repeat the previous position"*). |
 
+![Placing, lifting, and illegal moves](docs/mockups/board-interaction.png)
+
 A stone you place is timestamped internally the moment it lands (see
 [§8](#8-stone-lifespan-in-depth)), so its lifespan always counts from when
 *it* was placed, not from when the transport started.
 
 ## 4. The SEQUENCER section
+
+![The SEQUENCER panel](docs/mockups/sequencer-panel.png)
 
 ### Step rate, Note, Gate, Free Tempo
 
@@ -165,6 +176,8 @@ A stone you place is timestamped internally the moment it lands (see
 
 ## 5. The MIDI CHANNELS fold-out
 
+![The MIDI CHANNELS fold-out, collapsed and open](docs/mockups/channels-foldout.png)
+
 Click the **▸ MIDI CHANNELS** header (it expands to **▾ MIDI CHANNELS**) to
 reveal per-colour and per-playhead channel assignments. It stays folded by
 default and its open/closed state is **saved with your session**, so it
@@ -187,6 +200,8 @@ slider. That means two heads (or black and white) can deliberately share a
 channel, or the whole board can sit on channel 1, with no side effects.
 
 ## 6. The GAME RECORD section
+
+![The GAME RECORD panel with a record loaded](docs/mockups/game-record-panel.png)
 
 This lets you replay a real Go game's moves onto the board over time,
 independent of (and simultaneously with) the step sequencer's own clock —
@@ -231,6 +246,8 @@ is the simplest mode — one voice, tracing the whole board once per cycle.
 Routing is **by stone colour** (Black Channel / White Channel), which is
 why the MIDI Channels fold-out shows those two sliders active here.
 
+![Spiral mode: one playhead winding from a corner to tengen](docs/mockups/spiral-mode.png)
+
 ### Quads out / Quads in (4 playheads)
 
 The board is split into four quadrant blocks, each centred on that
@@ -247,6 +264,8 @@ All four heads share the same step clock, so they move in lock-step —
 useful for symmetric, four-voice patterns that stay rhythmically aligned.
 Routing is **by playhead** (Head 1–4 Channel).
 
+![Quads mode: one playhead per quadrant, meeting at the centre](docs/mockups/quads-mode.png)
+
 ### Polyrhythm (4 or 6 playheads)
 
 One playhead per **concentric ring** of the board (tengen is excluded — it
@@ -261,6 +280,8 @@ only all land back at their starting point together every 96 steps on a
 together**, so a fully-populated board plays as an evolving chord rather
 than a single melodic line. This is the mode to reach for if you want
 long-form, slowly-shifting polyrhythmic textures.
+
+![Polyrhythm mode: one playhead per concentric ring, tengen excluded](docs/mockups/polyrhythm-mode.png)
 
 ## 8. Stone lifespan in depth
 
