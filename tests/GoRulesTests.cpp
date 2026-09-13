@@ -723,13 +723,15 @@ namespace
     //  legal, the board does not dissolve, a seed names a game exactly, and swapping
     //  a finished game in never touches the heap.
 
-    goai::Settings aiSettings (int size, int moves, int variation, std::uint32_t seed)
+    goai::Settings aiSettings (int size, int moves, int variation, std::uint32_t seed,
+                               goai::Players players = goai::Players::classic)
     {
         goai::Settings s;
         s.size = size;
         s.moves = moves;
         s.variation = variation;
         s.seed = seed;
+        s.players = players;
         return s;
     }
 
@@ -1067,6 +1069,313 @@ namespace
         check (b.moves[0].index == aFirst, "the game that was playing is intact on the other side");
         check (b.blackRank == "territorial" && b.whiteRank == "fighting", "and so are the players' names");
     }
+
+    //==============================================================================
+    //  The classic players, pinned. A session saved with them plays its games
+    //  again from the seed, so not one of their moves may ever change. These are
+    //  hashes of fifteen long games a board, taken before the reading players
+    //  were added beside them: a hash that moves is a saved session broken.
+
+    std::uint32_t hashGames (int size, goai::Players players)
+    {
+        std::uint32_t h = 2166136261u;
+
+        const auto mix = [&h] (int value)
+        {
+            for (int b = 0; b < 2; ++b)
+            {
+                h ^= (std::uint32_t) ((value >> (8 * b)) & 0xff);
+                h *= 16777619u;
+            }
+        };
+
+        for (int variation : { 0, 35, 100 })
+        {
+            for (int g = 0; g < 5; ++g)
+            {
+                const auto game = goai::generate (aiSettings (size, 160, variation, goai::gameSeed (7u, g), players));
+                mix (game.moveCount());
+
+                for (const auto& move : game.moves)
+                    mix (move.index);
+            }
+        }
+
+        return h;
+    }
+
+    void testAiClassicUnchanged()
+    {
+        std::printf ("self-play: the classic players have not moved\n");
+
+        check (hashGames (9, goai::Players::classic)  == 0x8106a178u, "fifteen 9x9 games, move for move");
+        check (hashGames (13, goai::Players::classic) == 0x16c32e81u, "fifteen 13x13 games, move for move");
+        check (hashGames (19, goai::Players::classic) == 0x56a6ea8eu, "fifteen 19x19 games, move for move");
+
+        //  The reading pair are pinned the same way. Unlike the classic pair they
+        //  may be retuned - but a retune changes every game a session saved with
+        //  them names, so it has to be a decision rather than an accident: these
+        //  hashes change on purpose, or not at all.
+        std::printf ("self-play: the reading players are pinned too\n");
+
+        check (hashGames (9, goai::Players::reading)  == 0x3559b98du, "fifteen 9x9 games, move for move");
+        check (hashGames (13, goai::Players::reading) == 0x9db553cbu, "fifteen 13x13 games, move for move");
+        check (hashGames (19, goai::Players::reading) == 0xea6a617bu, "fifteen 19x19 games, move for move");
+    }
+
+    //==============================================================================
+    //  What the reading players know about a board (GoTactics.h), on positions
+    //  small enough to check by eye.
+
+    /** Stones set down without rules, row by row from the top: X black, O white. */
+    go::Board boardFrom (int size, std::initializer_list<const char*> rows)
+    {
+        go::Board board (size);
+        int r = 0;
+
+        for (const char* row : rows)
+        {
+            for (int c = 0; c < size && row[c] != 0; ++c)
+            {
+                if (row[c] == 'X') board.setStone (go::index (c, r, size), Stone::black);
+                if (row[c] == 'O') board.setStone (go::index (c, r, size), Stone::white);
+            }
+
+            ++r;
+        }
+
+        return board;
+    }
+
+    void testTacticsMoveFacts()
+    {
+        std::printf ("tactics: what a move does, before it is played\n");
+
+        tactics::Analysis analysis;
+        tactics::Scratch scratch;
+        tactics::Marks marks;
+
+        //  a white stone on its last liberty at the top, a black one at the bottom
+        const auto board = boardFrom (9, {
+            "",
+            "....X....",
+            "...XOX...",
+            "",
+            "",
+            "",
+            "....O....",
+            "...OXO...",
+            "" });
+
+        tactics::analyse (board, analysis, scratch);
+
+        const auto capture = tactics::describeMove (board, analysis, ix (4, 3), Stone::black, marks);
+        check (capture.legal && capture.captured == 1, "filling the last liberty lifts the stone");
+
+        const auto rescue = tactics::describeMove (board, analysis, ix (4, 8), Stone::black, marks);
+        check (rescue.legal && rescue.rescued == 1 && rescue.liberties == 2 && rescue.stones == 2,
+               "extending brings a stone out of atari, as a chain of two on two liberties");
+
+        const auto corner = boardFrom (9, { ".O", "O" });
+        tactics::analyse (corner, analysis, scratch);
+        check (! tactics::describeMove (corner, analysis, ix (0, 0), Stone::black, marks).legal,
+               "a stone with no liberty that takes nothing is suicide");
+
+        //  and through a real middlegame, what the chains say about every point
+        //  and both colours is what the rules say when the move is played
+        const auto game = goai::generate (aiSettings (13, 120, 60, 31337u));
+        go::Board position (13);
+        bool legality = true, captures = true, liberties = true;
+
+        for (int i = 0; i < game.moveCount(); ++i)
+        {
+            position.play (game.moves[(size_t) i].index, game.moves[(size_t) i].colour, false, true);
+
+            if (i % 20 != 19)
+                continue;
+
+            tactics::analyse (position, analysis, scratch);
+
+            for (int idx = 0; idx < position.cellCount(); ++idx)
+            {
+                for (const auto colour : { Stone::black, Stone::white })
+                {
+                    auto trial = position;
+                    const bool legal = trial.play (idx, colour, false, true) == MoveResult::ok;
+                    const auto facts = tactics::describeMove (position, analysis, idx, colour, marks);
+
+                    //  a ko is the one thing the chains leave to the board
+                    if (legal != facts.legal && ! (facts.legal && facts.maybeKo))
+                        legality = false;
+
+                    if (legal && facts.captured != trial.lastCaptureCount())
+                        captures = false;
+
+                    if (legal && std::min (go::libertiesAt (trial.position(), idx, 13), tactics::keptLiberties) != facts.liberties)
+                        liberties = false;
+                }
+            }
+        }
+
+        check (legality, "on a real game, the chains and the rules agree on every legal point");
+        check (captures, "and on what each move captures");
+        check (liberties, "and on the liberties it is left with");
+    }
+
+    void testTacticsLadders()
+    {
+        std::printf ("tactics: ladders\n");
+
+        tactics::Scratch scratch;
+
+        //  a white stone on two liberties in the shape a ladder starts from, the
+        //  board open towards the lower left - and the same with two white
+        //  stones sitting on the path it runs along. The white stone on the right
+        //  edge closes the other way: without it the atari from below would run
+        //  the stone into the near corner, a ladder no breaker down there stops.
+        const auto open = boardFrom (9, { "", "......X..", ".....XO.O", ".......X." });
+        const auto broken = boardFrom (9, { "", "......X..", ".....XO.O", ".......X.", "", "", "..O......", "..O......" });
+
+        tactics::LadderBudget budget;
+        check (tactics::chaserWins (open, ix (6, 2), budget, scratch), "a ladder with nothing in its way catches the stone");
+
+        budget = {};
+        check (! tactics::chaserWins (broken, ix (6, 2), budget, scratch), "a stone on its path breaks it");
+
+        //  one move on: the atari is in, and it is White's turn to run
+        const auto chased = boardFrom (9, { "", "......X..", ".....XOX.", ".......X." });
+        const auto chasedBroken = boardFrom (9, { "", "......X..", ".....XOX.", ".......X.", "", "", "..O......", "..O......" });
+
+        budget = {};
+        check (tactics::runnerDies (chased, ix (6, 2), budget, scratch), "running does not save it");
+
+        budget = {};
+        check (! tactics::runnerDies (chasedBroken, ix (6, 2), budget, scratch), "unless the ladder is broken");
+    }
+
+    void testTacticsVitalPoints()
+    {
+        std::printf ("tactics: eye shapes\n");
+
+        tactics::Scratch scratch;
+        std::array<Stone, go::maxCells> vital {};
+
+        //  a straight three along the bottom edge, walled in by black
+        const auto three = boardFrom (9, { "", "", "", "", "", "", "", "XXXXX....", "X...X...." });
+        tactics::findVitalPoints (three, scratch, vital);
+
+        check (vital[(size_t) ix (2, 8)] == Stone::black, "the middle of a straight three is its vital point");
+        check (vital[(size_t) ix (1, 8)] == Stone::none && vital[(size_t) ix (3, 8)] == Stone::none, "its ends are not");
+
+        //  the open board is not an eye space of anyone's
+        check (vital[(size_t) ix (4, 4)] == Stone::none, "nor is the open board");
+    }
+
+    void testReadingPlayersKeepTheContract()
+    {
+        std::printf ("self-play: the reading players keep the same promises\n");
+
+        const auto reading = goai::Players::reading;
+        const auto& book = goai::openingMoves (9);
+
+        bool opens = true, rightLength = true, allLegal = true, noRepeats = true, anythingCaptured = false;
+        int fewestStanding = 81, fewestBlack = 81, fewestWhite = 81;
+
+        for (int seed = 1; seed <= 8; ++seed)
+        {
+            const auto game = goai::generate (aiSettings (9, 60, 50, (std::uint32_t) seed * 2654435761u, reading));
+
+            rightLength = rightLength && game.moveCount() == 60;
+            allLegal = allLegal && refusedMoves (game) == 0;
+
+            for (size_t i = 0; i < book.size(); ++i)
+                if (game.moves[i].index != go::index (book[i].first, book[i].second, 9))
+                    opens = false;
+
+            for (size_t i = 1; i < game.moves.size(); ++i)
+                if (game.moves[i].index == game.moves[i - 1].index)
+                    noRepeats = false;
+
+            go::Board board (9);
+
+            for (const auto& move : game.moves)
+                board.play (move.index, move.colour, false, true);
+
+            int black = 0, white = 0;
+
+            for (int i = 0; i < board.cellCount(); ++i)
+            {
+                if (board.at (i) == Stone::black)      ++black;
+                else if (board.at (i) == Stone::white) ++white;
+            }
+
+            fewestStanding = std::min (fewestStanding, black + white);
+            fewestBlack = std::min (fewestBlack, black);
+            fewestWhite = std::min (fewestWhite, white);
+            anythingCaptured = anythingCaptured || board.capturedBlack() + board.capturedWhite() > 0;
+        }
+
+        check (opens, "eight games, all ten book moves");
+        check (rightLength && allLegal && noRepeats, "sixty moves each, all legal, none on the point just played");
+        check (fewestStanding >= 30 && fewestBlack >= 8 && fewestWhite >= 8, "the board does not dissolve");
+        check (anythingCaptured, "stones do get captured");
+
+        const auto big = goai::generate (aiSettings (13, 120, 35, 11u, reading));
+        const auto full = goai::generate (aiSettings (19, 160, 35, 65537u, reading));
+        check (big.moveCount() == 120 && refusedMoves (big) == 0, "13x13, 120 moves, all legal");
+        check (full.moveCount() == 160 && refusedMoves (full) == 0, "19x19, 160 moves, all legal");
+
+        const auto firstDifference = [] (const sgf::Game& x, const sgf::Game& y)
+        {
+            const int n = std::min (x.moveCount(), y.moveCount());
+
+            for (int i = 0; i < n; ++i)
+                if (x.moves[(size_t) i].index != y.moves[(size_t) i].index)
+                    return i;
+
+            return x.moveCount() == y.moveCount() ? -1 : n;
+        };
+
+        const auto a = goai::generate (aiSettings (9, 60, 50, 12345u, reading));
+        const auto b = goai::generate (aiSettings (9, 60, 50, 12345u, reading));
+        const auto c = goai::generate (aiSettings (9, 60, 50, 12346u, reading));
+        const auto flat1 = goai::generate (aiSettings (9, 60, 0, 1u, reading));
+        const auto flat2 = goai::generate (aiSettings (9, 60, 0, 999u, reading));
+        const auto classic = goai::generate (aiSettings (9, 60, 50, 12345u));
+
+        check (firstDifference (a, b) == -1, "the same seed plays the same game");
+        check (firstDifference (a, c) >= goai::openingLength, "a different seed a different one, after the opening");
+        check (firstDifference (flat1, flat2) == -1, "variation 0 plays one game whatever the seed");
+        check (firstDifference (a, classic) >= goai::openingLength, "and not the game the classic players would");
+        check (a.blackRank == "territorial" && a.whiteRank == "fighting", "Kuro is still territorial, Shiro still fighting");
+    }
+
+    void testReadingPlayersRead()
+    {
+        std::printf ("self-play: a reading player reads\n");
+
+        goai::ReadingWorkspace ws;
+        goai::Rng rng { 1 };
+        const auto shiro = goai::readingFighting();
+        const int run = ix (6, 3);
+
+        //  White is in atari, and running leads down a ladder that works
+        const auto chased = boardFrom (9, { "", "......X..", ".....XOX.", ".......X." });
+        check (goai::chooseReadingMove (chased, Stone::white, ix (7, 2), shiro, 0, rng, ws) != run,
+               "does not run out of atari into a ladder that works");
+
+        //  with two stones of its own on the path, it runs
+        const auto rescued = boardFrom (9, { "", "......X..", ".....XOX.", ".......X.", "", "", "..O......", "..O......" });
+        check (goai::chooseReadingMove (rescued, Stone::white, ix (7, 2), shiro, 0, rng, ws) == run,
+               "runs when its own stones break the ladder");
+
+        //  White to play against a black stone on two liberties: the atari from
+        //  the side that drives it down the ladder, not the one it runs away from
+        //  (the black stone on the edge is where it would run to)
+        const auto hunt = boardFrom (9, { "", "......O..", ".....OX.X", ".......O." });
+        check (goai::chooseReadingMove (hunt, Stone::white, ix (6, 2), shiro, 0, rng, ws) == ix (7, 2),
+               "starts the ladder that catches the stone");
+    }
 }
 
 int main (int argc, char** argv)
@@ -1101,6 +1410,13 @@ int main (int argc, char** argv)
     testAiCustomOpening();
     testAiFullBoard();
     testAiSwapIsAllocationFree();
+    testAiClassicUnchanged();
+
+    testTacticsMoveFacts();
+    testTacticsLadders();
+    testTacticsVitalPoints();
+    testReadingPlayersKeepTheContract();
+    testReadingPlayersRead();
 
     if (argc > 1)
         testSgfFile (argv[1]);
