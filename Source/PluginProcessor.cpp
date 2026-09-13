@@ -50,6 +50,10 @@ juce::StringArray GoSequencerProcessor::aiPlayersNames()
 
 namespace
 {
+    //  the MIDI out port is named in the state rather than by a parameter: it
+    //  is a device on this machine, not something to automate
+    const juce::Identifier midiOutPortProperty { "midiOutPort" };
+
     /** How many quarter notes one game move lasts. */
     double gameStepInBeats (int rateIndex, double barBeats, double stepBeats, int lapSteps)
     {
@@ -607,6 +611,10 @@ void GoSequencerProcessor::handleAsyncUpdate()
     //  second game it just asked for with the same thing
     if (pendingAiPrepare.exchange (false, std::memory_order_relaxed))
         prepareNextAiGame();
+
+    //  a restored session names its port, and opening one belongs here
+    if (pendingPortReopen.exchange (false, std::memory_order_relaxed))
+        portOut.setPort (midiOutPort());
 }
 
 void GoSequencerProcessor::clampStoneLifeToWaveGap()
@@ -1300,6 +1308,21 @@ void GoSequencerProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce:
 {
     juce::ScopedNoDenormals noDenormals;
 
+    //  read before any of the work, so a note's time on the port is measured
+    //  from the moment this block began
+    const double blockStartMs = juce::Time::getMillisecondCounterHiRes();
+
+    renderBlock (buffer, midi);
+
+    //  An offline render runs faster than the clock the port is timed by, and
+    //  nothing is listening to the port while it happens. The host still gets
+    //  every note either way.
+    if (portOut.isOpen() && ! isNonRealtime())
+        portOut.push (midi, blockStartMs, getSampleRate());
+}
+
+void GoSequencerProcessor::renderBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
     buffer.clear();
     midi.clear();                       //  this is a generator, not a MIDI insert
 
@@ -1626,6 +1649,31 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     pendingAiPrepare.store (false, std::memory_order_relaxed);
 
     cancelPendingUpdate();      //  the size is already where the state wants it
+
+    //  The port the session names has to be opened on the message thread. A
+    //  host normally restores state there, and then it opens now; if not, the
+    //  async update opens it - asked for after the cancel above, not before.
+    if (juce::MessageManager::existsAndIsCurrentThread())
+    {
+        portOut.setPort (midiOutPort());
+    }
+    else
+    {
+        pendingPortReopen.store (true, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    }
+}
+
+//==============================================================================
+void GoSequencerProcessor::setMidiOutPort (const juce::String& name)
+{
+    apvts.state.setProperty (midiOutPortProperty, name, nullptr);
+    portOut.setPort (name);
+}
+
+juce::String GoSequencerProcessor::midiOutPort() const
+{
+    return apvts.state.getProperty (midiOutPortProperty).toString();
 }
 
 //==============================================================================

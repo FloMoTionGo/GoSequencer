@@ -398,6 +398,23 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
                      "headChannel" + juce::String (h + 1),
                      headChannelAttachments[(size_t) h], narrowValueWidth);
 
+    //  the port: the channels above, kept intact for a host that would merge
+    //  them on its own track to track routing - see MidiPortOut
+    portBox.setTitle ("midi out port");
+    portBox.onOpen = [this] { refreshPortList(); };
+    portBox.onChange = [this]
+    {
+        const int index = portBox.getSelectedId() - 2;
+
+        processor.setMidiOutPort (juce::isPositiveAndBelow (index, portItems.size()) ? portItems[index]
+                                                                                     : juce::String());
+        refreshPortStatus();
+    };
+    addToTab (channelsTab, portBox);
+    setUpCaption (channelsTab, portCaption, "midi out port");
+    setUpText (channelsTab, portStatusLabel, juce::Justification::topLeft);
+    refreshPortList();
+
     //  ---- game record ------------------------------------------------------
     setUpText (gameTab, gameTitleLabel, juce::Justification::centredLeft);
     setUpText (gameTab, gameDetailLabel, juce::Justification::centredRight);
@@ -558,6 +575,7 @@ void GoSequencerEditor::setDarkMode (bool dark)
     //  dimText, so they need re-reading rather than the flat reset above
     refreshOpeningDisplay();
     refreshGameDisplay();
+    refreshPortStatus();
 
     processor.apvts.state.setProperty (darkModeProperty, dark, nullptr);
 
@@ -717,6 +735,51 @@ void GoSequencerEditor::refreshGameDisplay()
     lastMoveShown = processor.gamePosition();
 }
 
+void GoSequencerEditor::refreshPortList()
+{
+    const auto wanted = processor.midiOutPort();
+
+    portItems = MidiPortOut::availablePorts();
+
+    //  a port the session names but the system does not have right now stays
+    //  in the list, so the choice is not lost because loopMIDI is not running
+    const bool missing = wanted.isNotEmpty() && ! portItems.contains (wanted);
+
+    if (missing)
+        portItems.add (wanted);
+
+    portBox.clear (juce::dontSendNotification);
+    portBox.addItem ("Off", 1);
+
+    for (int i = 0; i < portItems.size(); ++i)
+        portBox.addItem (portItems[i] + (missing && i == portItems.size() - 1 ? "  (not there)" : ""), i + 2);
+
+    portBox.setSelectedId (wanted.isEmpty() ? 1 : portItems.indexOf (wanted) + 2, juce::dontSendNotification);
+
+    refreshPortStatus();
+}
+
+void GoSequencerEditor::refreshPortStatus()
+{
+    const auto wanted = processor.midiOutPort();
+    const bool open = processor.midiOutPortOpen();
+
+    juce::String status;
+
+    if (wanted.isEmpty())
+        status = "notes go to the host only";
+    else if (open)
+        status = "also sending to " + wanted + " - each track listening to it can pick out a channel";
+    else
+        status = "waiting for " + wanted + " - is loopMIDI running?";
+
+    portStatusLabel.setText (status, juce::dontSendNotification);
+    portStatusLabel.setColour (juce::Label::textColourId,
+                               (wanted.isNotEmpty() && ! open) ? theme::accent : theme::dimText);
+
+    lastPortOpenShown = open;
+}
+
 //==============================================================================
 bool GoSequencerEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
@@ -856,6 +919,11 @@ void GoSequencerEditor::resized()
                 placeSlider (cells[(size_t) (h - first)], headChannelCaptions[(size_t) h],
                              headChannelSliders[(size_t) h]);
         }
+
+        //  the port across the whole column, since a port's name can be long,
+        //  and under it two lines saying whether it is open
+        placeLabelled (nextRow (rows, cellHeight), portCaption, portBox);
+        portStatusLabel.setBounds (rows.removeFromTop (textLinesHeight));
     }
 
     //  ---- game record ------------------------------------------------------
@@ -998,6 +1066,12 @@ void GoSequencerEditor::timerCallback()
         if (line != lastOpeningShown)
             refreshOpeningDisplay();
     }
+
+    //  a port can open or go away with nothing clicked - loopMIDI started or
+    //  quit - so the dropdown and its line are read again when that happens,
+    //  though never from under an open popup
+    if (processor.midiOutPortOpen() != lastPortOpenShown && ! portBox.isPopupActive())
+        refreshPortList();
 
     const int position = processor.gamePosition();
 

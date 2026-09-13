@@ -43,6 +43,23 @@ public:
 };
 
 //==============================================================================
+/** A dropdown that fills itself again each time it opens, so a port created
+    while the editor was already showing is in the list. */
+class RefreshingComboBox final : public juce::ComboBox
+{
+public:
+    std::function<void()> onOpen;
+
+    void showPopup() override
+    {
+        if (onOpen != nullptr)
+            onOpen();
+
+        ComboBox::showPopup();
+    }
+};
+
+//==============================================================================
 class GoSequencerEditor final : public juce::AudioProcessorEditor,
                                 public juce::FileDragAndDropTarget,
                                 private juce::Timer
@@ -169,6 +186,17 @@ private:
     void refreshOpeningDisplay();
 
     juce::String lastOpeningShown;
+
+    /** The MIDI out port dropdown, filled from the ports there are right now,
+        and the line under it saying whether the chosen one is open - re-read
+        when it opens or closes, since loopMIDI can start or quit at any time. */
+    void refreshPortList();
+    void refreshPortStatus();
+
+    RefreshingComboBox portBox;
+    juce::Label portCaption, portStatusLabel;
+    juce::StringArray portItems;        //  item id i + 2 is portItems[i]; id 1 is Off
+    bool lastPortOpenShown = false;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerEditor)
 };

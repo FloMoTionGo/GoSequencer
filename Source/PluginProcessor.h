@@ -9,6 +9,7 @@
 
 #include "GoAI.h"
 #include "GoBoard.h"
+#include "MidiPortOut.h"
 #include "SgfParser.h"
 
 //==============================================================================
@@ -279,6 +280,23 @@ public:
     //  bound, since the game-advance loop can run many times per audio block.
     static constexpr int maxWaveEchoes = 16;
 
+    //==============================================================================
+    //  MIDI out port: every note goes to one of the system's MIDI ports as well
+    //  as to the host, on the channel it was given - the way to keep the colour
+    //  and playhead channels apart in a host like Live, which merges them onto
+    //  channel 1 on its own track to track routing (see MidiPortOut). The name
+    //  is kept in the state, not in a parameter: it is a device on this machine.
+    //  Message thread, apart from midiOutPortOpen().
+
+    /** Sends to the port with this name as well as to the host; an empty name
+        sends to the host only. Saved with the session. */
+    void setMidiOutPort (const juce::String& name);
+
+    /** The port asked for, whether or not it is there. */
+    juce::String midiOutPort() const;
+
+    bool midiOutPortOpen() const noexcept { return portOut.isOpen(); }
+
     juce::AudioProcessorValueTreeState apvts;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -337,6 +355,10 @@ private:
     /** The channel playhead head owns, as set - the heads are independent, so
         this is a lookup and not an offset from a base. */
     int headChannelFor (int head) const noexcept;
+
+    /** The work of processBlock, apart from the port: fills the block with the
+        notes this stretch of time plays. */
+    void renderBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&);
 
     void triggerStep (int stepIndex, int offsetInBlock, juce::MidiBuffer& midi, double samplesPerStep);
 
@@ -524,6 +546,10 @@ private:
     std::atomic<bool> pendingWaveClamp       { false };
     std::atomic<bool> pendingAiRestart       { false };
     std::atomic<bool> pendingAiPrepare       { false };
+    std::atomic<bool> pendingPortReopen      { false };
+
+    //  the notes' second way out, besides the host - see setMidiOutPort()
+    MidiPortOut portOut;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerProcessor)
 };
