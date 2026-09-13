@@ -16,10 +16,19 @@
 namespace go
 {
     inline constexpr int minSize  = 9;
-    inline constexpr int maxSize  = 13;
-    inline constexpr int maxCells = maxSize * maxSize;   // 169
+    inline constexpr int maxSize  = 19;
+    inline constexpr int maxCells = maxSize * maxSize;   // 361
 
-    inline constexpr bool isSupportedSize (int s) noexcept { return s == 9 || s == 13; }
+    /** The boards there are, smallest first. A size's place in this list is its
+        slot: tables kept per size are indexed by it, and the plugin's board size
+        choice lists them in the same order. */
+    inline constexpr int sizeCount = 3;
+    inline constexpr std::array<int, sizeCount> supportedSizes { 9, 13, 19 };
+
+    inline constexpr bool isSupportedSize (int s) noexcept { return s == 9 || s == 13 || s == 19; }
+
+    /** The slot of a supported size; anything else falls back to the 9x9's. */
+    inline constexpr int sizeSlot (int s) noexcept { return s == 19 ? 2 : (s == 13 ? 1 : 0); }
 
     enum class Stone : std::uint8_t { none = 0, black = 1, white = 2 };
 
@@ -88,44 +97,50 @@ namespace go
 
             9x9    4 rings of 32, 24, 16 and  8 points
             13x13  6 rings of 48, 40, 32, 24, 16 and 8 points
+            19x19  9 rings of 72, 64, 56, 48, 40, 32, 24, 16 and 8 points
 
-        The lengths fall in whole number ratios (4:3:2:1 and 6:5:4:3:2:1), which
-        is what makes one playhead per ring a polyrhythm rather than a mess. */
+        The lengths fall in whole number ratios (4:3:2:1, 6:5:4:3:2:1 and
+        9:8:...:1), which is what makes one playhead per ring a polyrhythm
+        rather than a mess. */
     inline constexpr int ringCount  (int size)        noexcept { return (size - 1) / 2; }
     inline constexpr int ringOffset (int size, int r) noexcept { return 4 * r * (size - r); }
     inline constexpr int ringLength (int size, int r) noexcept { return 4 * (size - 1 - 2 * r); }
 
-    inline constexpr int maxRings = ringCount (maxSize);      // 6, on a 13x13
+    inline constexpr int maxRings = ringCount (maxSize);      // 9, on a 19x19
 
-    /** The four quadrant blocks, each centred on a corner star point - the
-        san-san (3-3) point on a 9x9, the 4-4 point on a 13x13.
+    /** The four quadrant blocks. Each is half the board plus the line the blocks
+        share: side (size + 1) / 2, so two of them side by side span exactly the
+        board, and the four cover it, meeting on the middle row and column.
 
-        The radius is the star point's own offset from the edge, which makes the
-        blocks meet rather than gap: side 2r+1, and 2(2r+1) - 1 == size, so the
-        four of them cover the board and share the middle row and column.
+            9x9    four 5x5 blocks,   5 + 5 - 1 == 9
+            13x13  four 7x7 blocks,   7 + 7 - 1 == 13
+            19x19  four 10x10 blocks, 10 + 10 - 1 == 19
 
-            9x9    r = 2, four 5x5 blocks, 5 + 5 - 1 == 9
-            13x13  r = 3, four 7x7 blocks, 7 + 7 - 1 == 13
+        On the two smaller boards the side is odd, and the block's centre is the
+        corner star point - the san-san (3-3) point on a 9x9, the 4-4 point on a
+        13x13. A 19x19 block is even, so it has no single centre to wind in to:
+        its spiral ends on the square of four points in its middle, the 5-5 to
+        6-6 points of that corner. Its star point is the 4-4 one, a line further
+        out, on the spiral's second to last ring.
 
         Quadrants run clockwise from the top left, like the spiral. */
     inline constexpr int quadCount = 4;
 
-    inline constexpr int quadRadius (int size) noexcept { return (size - 1) / 4; }
-    inline constexpr int quadSide   (int size) noexcept { return 2 * quadRadius (size) + 1; }
+    inline constexpr int quadSide   (int size) noexcept { return (size + 1) / 2; }
     inline constexpr int quadSteps  (int size) noexcept { return quadSide (size) * quadSide (size); }
 
     inline constexpr int quadOriginCol (int size, int q) noexcept
     {
-        return (q == 1 || q == 2) ? 2 * quadRadius (size) : 0;
+        return (q == 1 || q == 2) ? quadSide (size) - 1 : 0;
     }
 
     inline constexpr int quadOriginRow (int size, int q) noexcept
     {
-        return (q >= 2) ? 2 * quadRadius (size) : 0;
+        return (q >= 2) ? quadSide (size) - 1 : 0;
     }
 
-    /** One quadrant's spiral, winding in to its star point. Reverse it to wind
-        out from the star point instead. Fills out[] and returns the length. */
+    /** One quadrant's spiral, winding in to the middle of its block. Reverse it
+        to wind out from there instead. Fills out[] and returns the length. */
     inline int quadOrder (int size, int q, std::array<int, maxCells>& out) noexcept
     {
         const int d = quadSide (size);
@@ -146,13 +161,39 @@ namespace go
     /** The handicap points: the four corner stars and tengen. */
     inline std::array<int, 5> starPoints (int size) noexcept
     {
-        const int e = (size >= 13 ? 3 : 2);          // 4-4 points on 13x13, 3-3 on 9x9
+        const int e = (size >= 13 ? 3 : 2);          // 4-4 points on 13x13 and 19x19, 3-3 on 9x9
         const int f = size - 1 - e;
         const int m = size / 2;
 
         return { index (e, e, size), index (f, e, size),
                  index (e, f, size), index (f, f, size),
                  index (m, m, size) };
+    }
+
+    inline constexpr int maxHoshi = 9;
+
+    /** Every point a goban marks with a dot: the star points above, plus the
+        four side stars a 19x19 carries half way along each 4th line. The small
+        boards mark only the five. Fills out[] and returns how many. */
+    inline int hoshiPoints (int size, std::array<int, maxHoshi>& out) noexcept
+    {
+        const auto stars = starPoints (size);
+        int n = 0;
+
+        for (int star : stars)
+            out[(size_t) n++] = star;
+
+        if (size >= 19)
+        {
+            const int e = 3, f = size - 1 - e, m = size / 2;
+
+            out[(size_t) n++] = index (m, e, size);
+            out[(size_t) n++] = index (e, m, size);
+            out[(size_t) n++] = index (f, m, size);
+            out[(size_t) n++] = index (m, f, size);
+        }
+
+        return n;
     }
 
     enum class MoveResult { ok, occupied, suicide, ko, outOfRange };

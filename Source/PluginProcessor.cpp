@@ -27,7 +27,9 @@ juce::StringArray GoSequencerProcessor::gameRateNames()
 
 juce::StringArray GoSequencerProcessor::boardSizeNames()
 {
-    return { "9 x 9", "13 x 13" };
+    //  go::supportedSizes order, so a choice index is a size slot - and new
+    //  sizes go on the end, so a saved session's index still means its board
+    return { "9 x 9", "13 x 13", "19 x 19" };
 }
 
 juce::StringArray GoSequencerProcessor::playModeNames()
@@ -220,13 +222,14 @@ GoSequencerProcessor::GoSequencerProcessor()
 
     jassert (noteParam != nullptr && rateParam != nullptr && boardSizeParam != nullptr);
 
-    go::spiralOrder (9, spiral9);
-    go::spiralOrder (13, spiral13);
-
-    for (int q = 0; q < go::quadCount; ++q)
+    for (int slot = 0; slot < go::sizeCount; ++slot)
     {
-        go::quadOrder (9, q, quad9[(size_t) q]);
-        go::quadOrder (13, q, quad13[(size_t) q]);
+        const int size = go::supportedSizes[(size_t) slot];
+
+        go::spiralOrder (size, spiralTables[(size_t) slot]);
+
+        for (int q = 0; q < go::quadCount; ++q)
+            go::quadOrder (size, q, quadTables[(size_t) slot][(size_t) q]);
     }
 
     apvts.addParameterListener ("boardSize", this);
@@ -281,7 +284,14 @@ int GoSequencerProcessor::spiralAt (int stepIndex) const noexcept
     if (stepIndex < 0 || stepIndex >= count)
         return 0;
 
-    return (size == 13 ? spiral13 : spiral9)[(size_t) stepIndex];
+    return spiralTables[(size_t) go::sizeSlot (size)][(size_t) stepIndex];
+}
+
+int GoSequencerProcessor::chosenBoardSize() const noexcept
+{
+    const int slot = boardSizeParam != nullptr ? boardSizeParam->getIndex() : 0;
+
+    return go::supportedSizes[(size_t) juce::jlimit (0, go::sizeCount - 1, slot)];
 }
 
 bool GoSequencerProcessor::isPolyrhythm() const noexcept
@@ -341,7 +351,7 @@ int GoSequencerProcessor::quadCellAt (int quad, int pos) const noexcept
     if (quadsWindOut())
         i = n - 1 - i;
 
-    return (size == 13 ? quad13 : quad9)[(size_t) quad][(size_t) i];
+    return quadTables[(size_t) go::sizeSlot (size)][(size_t) quad][(size_t) i];
 }
 
 int GoSequencerProcessor::headCellAt (int head, int pos) const noexcept
@@ -558,7 +568,7 @@ void GoSequencerProcessor::parameterChanged (const juce::String& parameterID, fl
 void GoSequencerProcessor::handleAsyncUpdate()
 {
     if (pendingBoardSizeChange.exchange (false, std::memory_order_relaxed))
-        applyBoardSize (boardSizeParam != nullptr && boardSizeParam->getIndex() == 1 ? 13 : 9);
+        applyBoardSize (chosenBoardSize());
 
     if (pendingWaveClamp.exchange (false, std::memory_order_relaxed))
         clampStoneLifeToWaveGap();
@@ -664,7 +674,7 @@ juce::String GoSequencerProcessor::loadSgfText (const juce::String& text, const 
 
     if (! go::isSupportedSize (parsed.size))
         return juce::String (parsed.size) + "x" + juce::String (parsed.size)
-             + " records are not supported yet - 9x9 and 13x13 only";
+             + " records are not supported - 9x9, 13x13 and 19x19 only";
 
     //  a loaded record takes the board over from the players, and the switch
     //  goes off with it - checked before anything is written, so a record that
@@ -695,7 +705,7 @@ juce::String GoSequencerProcessor::loadSgfText (const juce::String& text, const 
     //  keep the board size control in step with the record
     if (boardSizeParam != nullptr)
     {
-        const int wanted = (parsed.size == 13 ? 1 : 0);
+        const int wanted = go::sizeSlot (parsed.size);
 
         if (boardSizeParam->getIndex() != wanted)
         {
@@ -854,7 +864,7 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
 
 void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
 {
-    const int size = (boardSizeParam != nullptr && boardSizeParam->getIndex() == 1) ? 13 : 9;
+    const int size = chosenBoardSize();
     const auto settings = aiSettingsFor (size, gameNumber);
 
     auto fresh = goai::generate (settings);

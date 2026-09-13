@@ -38,6 +38,7 @@ namespace
 
     int ix (int col, int row)             { return go::index (col, row, S); }
     int ix13 (int col, int row)           { return go::index (col, row, 13); }
+    int ix19 (int col, int row)           { return go::index (col, row, 19); }
 
     void testSpiral()
     {
@@ -103,6 +104,34 @@ namespace
         check (order[count - 1] == ix13 (6, 6), "ends on tengen");
     }
 
+    void testSpiral19()
+    {
+        std::printf ("spiral order, 19x19\n");
+
+        std::array<int, go::maxCells> order {};
+        const int count = go::spiralOrder (19, order);
+
+        check (count == 361, "361 steps");
+        check (go::maxCells == 361, "storage is sized for the full board");
+
+        std::array<int, go::maxCells> seen {};
+
+        for (int i = 0; i < count; ++i)
+            ++seen[(size_t) order[(size_t) i]];
+
+        bool everyPointOnce = true;
+
+        for (int i = 0; i < count; ++i)
+            if (seen[(size_t) i] != 1)
+                everyPointOnce = false;
+
+        check (everyPointOnce, "all 361 points visited exactly once");
+        check (order[0] == ix19 (0, 0), "starts top left");
+        check (order[18] == ix19 (18, 0), "reaches the top right corner on step 19");
+        check (order[36] == ix19 (18, 18), "reaches the bottom right corner");
+        check (order[count - 1] == ix19 (9, 9), "ends on tengen");
+    }
+
     /** The rings the polyrhythm mode plays: concentric, outermost first, with
         tengen left out. They are slices of the spiral, so this checks the two
         agree. */
@@ -112,13 +141,22 @@ namespace
 
         check (go::ringCount (9)  == 4, "9x9 has four rings once tengen is left out");
         check (go::ringCount (13) == 6, "13x13 has six rings once tengen is left out");
-        check (go::maxRings == 6, "storage is sized for the biggest board");
+        check (go::ringCount (19) == 9, "19x19 has nine rings once tengen is left out");
+        check (go::maxRings == 9, "storage is sized for the biggest board");
 
         check (go::ringLength (9, 0) == 32 && go::ringLength (9, 1) == 24
                  && go::ringLength (9, 2) == 16 && go::ringLength (9, 3) == 8,
                "9x9 rings run 32, 24, 16, 8 - a 4:3:2:1 polyrhythm");
 
-        for (int size : { 9, 13 })
+        bool fullBoardRatios = true;
+
+        for (int r = 0; r < go::ringCount (19); ++r)
+            if (go::ringLength (19, r) != 8 * (9 - r))
+                fullBoardRatios = false;
+
+        check (fullBoardRatios, "19x19 rings run 72 down to 8 - a 9:8:...:1 polyrhythm");
+
+        for (int size : { 9, 13, 19 })
         {
             const std::string label = " (" + std::to_string (size) + "x" + std::to_string (size) + ")";
 
@@ -174,15 +212,17 @@ namespace
     {
         std::printf ("quadrant spirals\n");
 
-        check (go::quadRadius (9) == 2 && go::quadSide (9) == 5 && go::quadSteps (9) == 25,
+        check (go::quadSide (9) == 5 && go::quadSteps (9) == 25,
                "9x9 gives four 5x5 quadrants of 25 points");
-        check (go::quadRadius (13) == 3 && go::quadSide (13) == 7 && go::quadSteps (13) == 49,
+        check (go::quadSide (13) == 7 && go::quadSteps (13) == 49,
                "13x13 gives four 7x7 quadrants of 49 points");
+        check (go::quadSide (19) == 10 && go::quadSteps (19) == 100,
+               "19x19 gives four 10x10 quadrants of 100 points");
 
-        for (int size : { 9, 13 })
+        for (int size : { 9, 13, 19 })
         {
             const std::string label = " (" + std::to_string (size) + "x" + std::to_string (size) + ")";
-            const int r = go::quadRadius (size);
+            const int side = go::quadSide (size);
 
             check (2 * go::quadSide (size) - 1 == size,
                    "two quadrants span the board, sharing one line" + label);
@@ -202,8 +242,30 @@ namespace
                 if (n != go::quadSteps (size))
                     inRange = false;
 
-                //  the inward spiral finishes on the star point
-                if (order[(size_t) (n - 1)] != wantCentre[q])
+                //  the inward spiral finishes on the star point - or, on a
+                //  19x19, whose blocks are even and have no single centre, on
+                //  the square of four points in the middle of the block
+                const int last = order[(size_t) (n - 1)];
+
+                if (side % 2 == 0)
+                {
+                    const int c  = go::colOf (last, size) - go::quadOriginCol (size, q);
+                    const int rr = go::rowOf (last, size) - go::quadOriginRow (size, q);
+
+                    if (c < side / 2 - 1 || c > side / 2 || rr < side / 2 - 1 || rr > side / 2)
+                        centresMatch = false;
+                }
+                else if (last != wantCentre[q])
+                {
+                    centresMatch = false;
+                }
+
+                //  and wherever the spiral ends, the corner's star point is in
+                //  its own block
+                const int sc = go::colOf (wantCentre[q], size) - go::quadOriginCol (size, q);
+                const int sr = go::rowOf (wantCentre[q], size) - go::quadOriginRow (size, q);
+
+                if (sc < 0 || sr < 0 || sc >= side || sr >= side)
                     centresMatch = false;
 
                 for (int i = 0; i < n; ++i)
@@ -216,7 +278,8 @@ namespace
             }
 
             check (inRange, "every quadrant point lands on the board" + label);
-            check (centresMatch, "each spiral winds in to its own star point" + label);
+            check (centresMatch, side % 2 == 0 ? "each spiral winds in to the middle of its block, around its star point" + label
+                                               : "each spiral winds in to its own star point" + label);
 
             //  coverage: the middle row and column belong to two quadrants,
             //  tengen to all four, everything else to exactly one
@@ -233,7 +296,6 @@ namespace
                 }
 
             check (coverage, "quadrants cover the board, overlapping only on the middle cross" + label);
-            check (r == (size >= 13 ? 3 : 2), "the radius is the star point's own offset" + label);
         }
     }
 
@@ -248,6 +310,24 @@ namespace
         const auto large = go::starPoints (13);
         check (large[0] == ix13 (3, 3) && large[3] == ix13 (9, 9), "13x13 stars sit on the 4-4 points");
         check (large[4] == ix13 (6, 6), "13x13 tengen");
+
+        const auto full = go::starPoints (19);
+        check (full[0] == ix19 (3, 3) && full[3] == ix19 (15, 15), "19x19 stars sit on the 4-4 points");
+        check (full[4] == ix19 (9, 9), "19x19 tengen");
+
+        std::array<int, go::maxHoshi> dots {};
+        check (go::hoshiPoints (9, dots) == 5 && go::hoshiPoints (13, dots) == 5, "the small boards mark five points");
+
+        const int marked = go::hoshiPoints (19, dots);
+
+        auto isMarked = [&] (int idx)
+        {
+            return std::count (dots.begin(), dots.begin() + marked, idx) == 1;
+        };
+
+        check (marked == 9 && isMarked (ix19 (9, 3)) && isMarked (ix19 (3, 9))
+                 && isMarked (ix19 (15, 9)) && isMarked (ix19 (9, 15)) && isMarked (ix19 (9, 9)),
+               "a 19x19 marks nine, the four side stars included");
     }
 
     void testLiberties()
@@ -328,6 +408,28 @@ namespace
         check (b.at (ix13 (12, 5)) == Stone::black, "neighbouring rows are untouched");
     }
 
+    void testCapture19()
+    {
+        std::printf ("capturing on the full board\n");
+
+        go::Board b (19);
+        check (b.size() == 19 && b.cellCount() == 361, "board reports 19x19");
+
+        //  the far corner: the last indices of the board, beyond anything a
+        //  13x13 ever reached
+        b.setStone (ix19 (18, 18), Stone::white);
+        b.setStone (ix19 (17, 18), Stone::white);
+        b.setStone (ix19 (16, 18), Stone::black);
+        b.setStone (ix19 (17, 17), Stone::black);
+
+        check (b.play (ix19 (18, 17), Stone::black, false, true) == MoveResult::ok, "black fills the corner's last liberty");
+        check (b.at (ix19 (18, 18)) == Stone::none && b.at (ix19 (17, 18)) == Stone::none,
+               "both stones in the bottom right corner are lifted");
+        check (b.capturedWhite() == 2, "two white prisoners counted");
+        check (go::libertiesAt (b.position(), ix19 (18, 17), 19) == 5,
+               "the capturing chain takes the two freed points as liberties");
+    }
+
     void testSizeChangeClears()
     {
         std::printf ("changing size\n");
@@ -338,6 +440,14 @@ namespace
 
         check (b.size() == 13, "size changed");
         check (b.stoneCount() == 0, "the board is wiped, the points mean something else now");
+
+        b.play (ix13 (6, 6), Stone::black, false, true);
+        b.setSize (19);
+        check (b.size() == 19 && b.stoneCount() == 0, "on to 19x19, wiped again");
+
+        b.play (ix19 (9, 9), Stone::black, false, true);
+        b.setSize (21);
+        check (b.size() == 19 && b.stoneCount() == 1, "a size there is no board for is refused, and the board kept");
     }
 
     void testTwoEyesLive()
@@ -469,6 +579,20 @@ namespace
                 same = false;
 
         check (same, "board survives the round trip");
+
+        go::Board full (19);
+        full.play (ix19 (18, 18), Stone::white, false, true);
+        full.play (ix19 (0, 18), Stone::black, false, true);
+
+        const auto t = full.toString();
+        check ((int) t.size() == 361, "361 characters written for a 19x19");
+
+        go::Board fullRestored (19);
+        fullRestored.fromString (t);
+
+        check (fullRestored.stoneCount() == 2 && fullRestored.at (ix19 (18, 18)) == Stone::white
+                 && fullRestored.at (ix19 (0, 18)) == Stone::black,
+               "the far corners of a 19x19 survive the round trip");
     }
 
     //==============================================================================
@@ -511,6 +635,14 @@ namespace
         check (game.moves[0].isPass, "an empty value is a pass");
         check (game.moves[1].isPass, "tt is a pass on a small board");
         check (! game.moves[2].isPass && game.moves[2].index == ix (4, 4), "a real move follows");
+
+        const auto full = sgf::parse ("(;FF[4]SZ[19]AB[dd];W[ss];B[tt];W[pd])");
+
+        check (full.valid && full.size == 19 && full.moveCount() == 3, "a 19x19 record parses");
+        check (full.setup[0].index == ix19 (3, 3), "AB[dd] is the upper left star point");
+        check (! full.moves[0].isPass && full.moves[0].index == ix19 (18, 18), "ss is the bottom right corner");
+        check (full.moves[1].isPass, "tt is still a pass on the full board");
+        check (full.moves[2].index == ix19 (15, 3), "pd is the upper right star point");
     }
 
     void testSgfFailures()
@@ -525,6 +657,11 @@ namespace
 
         const auto big = sgf::parse ("(;FF[4]SZ[19];B[aa])");
         check (big.valid && big.size == 19, "a 19x19 record still parses - the plugin decides what it supports");
+        check (go::isSupportedSize (big.size), "and 19x19 is a board it has");
+
+        const auto odd = sgf::parse ("(;FF[4]SZ[21];B[aa])");
+        check (odd.valid && ! go::isSupportedSize (odd.size), "a 21x21 parses too, but there is no board for it");
+        check (! go::isSupportedSize (7) && ! go::isSupportedSize (15), "nor for any size between the three");
     }
 
     void testSgfFile (const char* path)
@@ -851,6 +988,62 @@ namespace
         check (identical, "and dropping it plays the book game exactly");
     }
 
+    void testAiFullBoard()
+    {
+        std::printf ("self-play: 19x19\n");
+
+        const auto& book = goai::openingMoves (19);
+        check (book.size() == 10, "ten book moves on a 19x19");
+        check (book[0] == std::make_pair (15, 3), "the book opens on the upper right star point");
+
+        go::Board trial (19);
+        bool bookLegal = true;
+
+        for (size_t i = 0; i < book.size(); ++i)
+            if (trial.play (ix19 (book[i].first, book[i].second),
+                            i % 2 == 0 ? Stone::black : Stone::white, false, true) != MoveResult::ok)
+                bookLegal = false;
+
+        check (bookLegal, "the book line is legal from an empty board");
+
+        bool followed = true, legal = true, lengths = true;
+
+        for (int seed = 1; seed <= 4; ++seed)
+        {
+            const auto game = goai::generate (aiSettings (19, 160, 35, (std::uint32_t) seed * 65537u));
+
+            if (game.size != 19 || game.moveCount() != 160) lengths = false;
+            if (refusedMoves (game) != 0) legal = false;
+
+            for (size_t i = 0; i < book.size(); ++i)
+                if (game.moves[i].index != ix19 (book[i].first, book[i].second))
+                    followed = false;
+        }
+
+        check (lengths, "four games, the longest length the plugin allows");
+        check (legal, "every move legal under no-suicide and ko");
+        check (followed, "and every one of them opens on the book");
+
+        const auto a = goai::generate (aiSettings (19, 120, 50, 99u));
+        const auto b = goai::generate (aiSettings (19, 120, 50, 99u));
+
+        bool same = a.moveCount() == b.moveCount(), outsideSmallBoard = false;
+
+        for (int i = 0; i < a.moveCount(); ++i)
+        {
+            const int idx = a.moves[(size_t) i].index;
+
+            if (idx != b.moves[(size_t) i].index)
+                same = false;
+
+            if (i >= goai::openingLength && (go::colOf (idx, 19) >= 13 || go::rowOf (idx, 19) >= 13))
+                outsideSmallBoard = true;
+        }
+
+        check (same, "a seed names a 19x19 game too");
+        check (outsideSmallBoard, "and the players use the room a 13x13 does not have");
+    }
+
     void testAiSwapIsAllocationFree()
     {
         std::printf ("self-play: swapping a game in\n");
@@ -880,6 +1073,7 @@ int main (int argc, char** argv)
 {
     testSpiral();
     testSpiral13();
+    testSpiral19();
     testRings();
     testQuads();
     testStarPoints();
@@ -887,6 +1081,7 @@ int main (int argc, char** argv)
     testSingleCapture();
     testGroupCapture();
     testCapture13();
+    testCapture19();
     testSizeChangeClears();
     testTwoEyesLive();
     testSuicide();
@@ -904,6 +1099,7 @@ int main (int argc, char** argv)
     testAiDeterminism();
     testAiGameSeeds();
     testAiCustomOpening();
+    testAiFullBoard();
     testAiSwapIsAllocationFree();
 
     if (argc > 1)

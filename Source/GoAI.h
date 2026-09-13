@@ -6,8 +6,9 @@
 //  of terms a beginner would recognise - take stones, save your own, cut,
 //  connect, stay near the fight, keep off the first line - and one of the best
 //  few is drawn at random. There is no reading, no playout and no net, which is
-//  the point: a whole game is a few hundred microseconds of plain arithmetic,
-//  so the plugin can keep a record ready without ever leaving the machine.
+//  the point: a whole game is a few milliseconds of plain arithmetic - about one
+//  on a 9x9, six on a 19x19, for the default length - so the plugin can keep a
+//  record ready without ever leaving the machine.
 //
 //  What makes two players out of one function is the weights. Black and White
 //  hold a different Style, so they want different points from the same board -
@@ -166,11 +167,16 @@ namespace goai
 
     //==============================================================================
     /** The book both players open from unless they are given an opening of their
-        own, as (column, row) pairs, Black first. These are not invented: they are
-        the first ten moves of two of the records in sgf/ -
-        nine_dan_9x9_43610191.sgf on a 9x9, Blackie_BIBA_13x13_25655059.sgf on a
-        13x13 - so the motif every game starts from is real play rather than a
-        pattern that merely looks like it.
+        own, as (column, row) pairs, Black first. On the two small boards these
+        are not invented: they are the first ten moves of two of the records in
+        sgf/ - nine_dan_9x9_43610191.sgf on a 9x9, Blackie_BIBA_13x13_25655059.sgf
+        on a 13x13 - so the motif every game starts from is real play rather than
+        a pattern that merely looks like it.
+
+        There is no 19x19 record there to take one from, so the full board opens
+        on a textbook line instead: the four star points, then the commonest star
+        point joseki - low approach, small knight's move, two-space extension -
+        played out in the upper left corner and again in the lower right.
 
         An opening point that is somehow not legal is skipped and the players take
         over early. On an empty board a book line cannot do that, and a custom
@@ -190,7 +196,15 @@ namespace goai
             { 2, 9 }, { 3, 10 }, { 4, 9 }, { 4, 10 }, { 5, 10 }
         };
 
-        return size == 13 ? book13 : book9;
+        //  Q16 D4 Q4 D16, then F17 C14 J17 in the upper left and R6 O3 R9 in
+        //  the lower right
+        static const std::vector<std::pair<int, int>> book19
+        {
+            { 15, 3 }, { 3, 15 }, { 15, 15 }, { 3, 3 }, { 5, 2 },
+            { 2, 5 }, { 8, 2 }, { 16, 13 }, { 13, 16 }, { 16, 10 }
+        };
+
+        return size == 19 ? book19 : (size == 13 ? book13 : book9);
     }
 
     /** How long an opening is, book or custom: ten moves, black first. */

@@ -19,16 +19,18 @@
                   in to tengen. Black and white have a channel each, so the
                   colour it passed can be routed as well as heard.
 
-      Quads       one playhead per quadrant, each spiralling around that
-                  quadrant's star point - the san-san point on a 9x9. The four
+      Quads       one playhead per quadrant, each spiralling around the middle
+                  of its block - the corner star point on a 9x9 and a 13x13,
+                  the four points inside the 4-4 star on a 19x19. The four
                   blocks share the middle row and column, so the heads meet on
-                  the same edge in the centre. They can wind out from the star
-                  point or in to it.
+                  the same edge in the centre. They can wind out from the
+                  middle or in to it.
 
       Polyrhythm  one playhead per concentric ring, tengen aside: four of them
-                  on a 9x9, six on a 13x13. They share the step clock, but the
-                  rings are 32, 24, 16 and 8 points around, so they come back
-                  into phase only every 96 steps (480 on a 13x13). Every ring
+                  on a 9x9, six on a 13x13, nine on a 19x19. They share the step
+                  clock, but the rings are 32, 24, 16 and 8 points around, so
+                  they come back into phase only every 96 steps (480 on a
+                  13x13, 20160 on a 19x19). Every ring
                   has its own channel and its own transpose, and they all sound
                   together, so the board plays as a chord rather than a line.
 
@@ -49,8 +51,8 @@
 
     Channels are set one at a time and never derived from one another: spiral
     has a channel for black and one for white, and the multi head modes have one
-    per playhead - four on a 9x9, six rings on a 13x13. They start out on 1..6,
-    but nothing stops two heads sharing a channel or the whole board sitting on
+    per playhead - four on a 9x9, six rings on a 13x13, nine on a 19x19. They
+    start out on 1..9, but nothing stops two heads sharing a channel or the whole board sitting on
     one. The editor keeps them folded away, since a set that never leaves channel
     1 has no reason to look at them.
 
@@ -123,11 +125,12 @@ public:
     int  stepCount()      const noexcept { const int s = boardSize(); return s * s; }
     int  spiralAt (int step) const noexcept;
 
-    //  Rings. ringCount() is 4 on a 9x9 and 6 on a 13x13: tengen is left out.
+    //  Rings. ringCount() is 4 on a 9x9, 6 on a 13x13 and 9 on a 19x19: tengen
+    //  is left out.
     bool isPolyrhythm()   const noexcept;
     int  ringCount()      const noexcept { return go::ringCount (boardSize()); }
 
-    //  Quadrants: four spirals around the corner star points.
+    //  Quadrants: four spirals, one per corner block.
     bool isQuads()        const noexcept;
     bool quadsWindOut()   const noexcept;
 
@@ -301,6 +304,10 @@ private:
 
     void publishBoard();
     void applyBoardSize (int newSize);
+
+    /** The size the board size parameter asks for. Its choices are listed in
+        go::supportedSizes order, so the choice index is the size slot. */
+    int chosenBoardSize() const noexcept;
     /** Sends one note for the stone on idx, if there is one and it is still
         inside its lifespan. Every mode goes through here, so the lifespan gate,
         the gate length, retrigger safety and the note off queue are shared. */
@@ -420,13 +427,14 @@ private:
     std::atomic<bool> running { false };
     std::atomic<int> nextAlternating { (int) go::Stone::black };
 
-    std::array<int, go::maxCells> spiral9 {}, spiral13 {};
-    std::array<std::array<int, go::maxCells>, go::quadCount> quad9 {}, quad13 {};
+    //  the walks, worked out once per board size and indexed by go::sizeSlot()
+    std::array<std::array<int, go::maxCells>, go::sizeCount> spiralTables {};
+    std::array<std::array<std::array<int, go::maxCells>, go::quadCount>, go::sizeCount> quadTables {};
 
     //  room for every ring to hold a note at once, with headroom for the
     //  overlap when a long gate runs into the next step
     std::array<PendingNoteOff, 32> pending {};
-    //  maxRings is the widest any mode gets: 6 rings beats 4 quadrants
+    //  maxRings is the widest any mode gets: 9 rings beats 4 quadrants
     std::array<std::atomic<int>, go::maxRings> headPos {};
 
     //  Two ways of ageing a stone, both a difference between "then" and "now":
