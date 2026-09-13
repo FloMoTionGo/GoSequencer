@@ -42,6 +42,12 @@ juce::StringArray GoSequencerProcessor::lifeModeNames()
     return { "Steps", "Placements" };
 }
 
+juce::StringArray GoSequencerProcessor::aiPlayersNames()
+{
+    //  a saved session stores the index, so a new pair goes on the end
+    return { "Classic", "Reading" };
+}
+
 namespace
 {
     /** How many quarter notes one game move lasts. */
@@ -181,6 +187,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     //  names the run: the same seed is the same games, in the same order
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "aiSeed", 1 }, "AI Seed", 1, 999, 1));
 
+    //  which pair plays - part of what names a game, since the two pairs play
+    //  different games from one seed. A new instance gets the reading pair; a
+    //  session saved before there was a choice comes back with the classic one
+    //  (see setStateInformation), because those are the games it saved.
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "aiPlayers", 1 }, "AI Players",
+                                                        aiPlayersNames(), 1));
+
     return layout;
 }
 
@@ -215,6 +228,7 @@ GoSequencerProcessor::GoSequencerProcessor()
     aiMovesParam     = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("aiMoves"));
     aiVariationParam = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("aiVariation"));
     aiSeedParam      = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("aiSeed"));
+    aiPlayersParam   = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("aiPlayers"));
 
     for (int h = 0; h < maxHeadChannels; ++h)
         headChannel[(size_t) h] = dynamic_cast<juce::AudioParameterInt*>
@@ -240,6 +254,7 @@ GoSequencerProcessor::GoSequencerProcessor()
     apvts.addParameterListener ("aiMoves", this);
     apvts.addParameterListener ("aiVariation", this);
     apvts.addParameterListener ("aiSeed", this);
+    apvts.addParameterListener ("aiPlayers", this);
 
     publishBoard();
 }
@@ -254,6 +269,7 @@ GoSequencerProcessor::~GoSequencerProcessor()
     apvts.removeParameterListener ("aiMoves", this);
     apvts.removeParameterListener ("aiVariation", this);
     apvts.removeParameterListener ("aiSeed", this);
+    apvts.removeParameterListener ("aiPlayers", this);
     cancelPendingUpdate();
 }
 
@@ -560,7 +576,8 @@ void GoSequencerProcessor::parameterChanged (const juce::String& parameterID, fl
         pendingAiRestart.store (true, std::memory_order_relaxed);
         triggerAsyncUpdate();       //  generating a game allocates: not here
     }
-    else if (parameterID == "aiMoves" || parameterID == "aiVariation" || parameterID == "aiSeed")
+    else if (parameterID == "aiMoves" || parameterID == "aiVariation" || parameterID == "aiSeed"
+              || parameterID == "aiPlayers")
     {
         //  the game playing is left alone - these are read when one is written,
         //  so the change arrives with the next game rather than cutting this one
@@ -852,6 +869,10 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
     settings.size      = size;
     settings.moves     = aiMovesParam     != nullptr ? aiMovesParam->get() : 60;
     settings.variation = aiVariationParam != nullptr ? aiVariationParam->get() : 35;    // per cent, as the slider reads
+
+    //  the choice lists the pairs in goai::Players order, so its index is the pair
+    settings.players   = aiPlayersParam != nullptr ? (goai::Players) aiPlayersParam->getIndex()
+                                                   : goai::Players::reading;
 
     //  a custom opening is a set of points, so it only means anything on the
     //  board it was played on; on any other one the book takes over again
@@ -1510,6 +1531,17 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
 
     if (auto* child = xml->getChildByName ("SGF"))
         savedSgf = child->getAllSubText();
+
+    //  A session from before the players could be chosen names its games with
+    //  the classic pair. Left alone, the missing parameter would come back at
+    //  its default - the reading pair - and every game of the saved run would be
+    //  played again differently from the one that was saved.
+    if (xml->getChildByAttribute ("id", "aiPlayers") == nullptr)
+    {
+        auto* players = xml->createNewChildElement ("PARAM");
+        players->setAttribute ("id", "aiPlayers");
+        players->setAttribute ("value", (int) goai::Players::classic);
+    }
 
     apvts.replaceState (juce::ValueTree::fromXml (*xml));
     clampStoneLifeToWaveGap();      //  belt and suspenders: a saved session's own values might predate the rule

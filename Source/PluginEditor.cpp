@@ -452,12 +452,19 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     //  The record is written rather than loaded, so Move Rate, Run and Loop on
     //  the game tab drive a generated game exactly as they drive a loaded one.
     setUpToggle (aiTab, aiPlayButton, "AI self-play", "aiPlay", aiPlayAttachment);
+
+    //  which pair writes the games: the classic players, or the ones that read
+    //  ladders, eye shapes and areas before they choose
+    setUpCombo  (aiTab, aiPlayersBox, aiPlayersCaption, "players", GoSequencerProcessor::aiPlayersNames(),
+                 "aiPlayers", aiPlayersAttachment);
     setUpSlider (aiTab, aiMovesSlider, aiMovesCaption, "game length", "aiMoves", aiMovesAttachment);
     setUpSlider (aiTab, aiVariationSlider, aiVariationCaption, "variation", "aiVariation", aiVariationAttachment);
     setUpSlider (aiTab, aiSeedSlider, aiSeedCaption, "seed", "aiSeed", aiSeedAttachment);
 
     for (auto* slider : { &aiMovesSlider, &aiVariationSlider, &aiSeedSlider })
         slider->setEnabled (processor.aiSelfPlay());               //  as above: the tick keeps these in step
+
+    aiPlayersBox.setEnabled (processor.aiSelfPlay());
 
     //  The opening. A position is not an opening - the order decides what is
     //  captured - so this takes the ten stones the board was clicked in, not
@@ -891,15 +898,18 @@ void GoSequencerEditor::resized()
     {
         auto rows = column;
 
-        //  the switch and the three numbers a game is written from; the numbers
-        //  are greyed out by timerCallback() while the switch is off
+        //  the switch, then what a game is written from - which pair plays, and
+        //  the three numbers; timerCallback() greys those out while it is off
         auto cells = columns (nextRow (rows, cellHeight), 2);
         placeControl (cells[0], aiPlayButton);
-        placeSlider (cells[1], aiMovesCaption, aiMovesSlider);
+        placeLabelled (cells[1], aiPlayersCaption, aiPlayersBox);
 
         cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], aiVariationCaption, aiVariationSlider);
-        placeSlider (cells[1], aiSeedCaption, aiSeedSlider);
+        placeSlider (cells[0], aiMovesCaption, aiMovesSlider);
+        placeSlider (cells[1], aiVariationCaption, aiVariationSlider);
+
+        cells = columns (nextRow (rows, cellHeight), 2);
+        placeSlider (cells[0], aiSeedCaption, aiSeedSlider);
 
         {
             //  two buttons, and under them the line that says which opening is in force
@@ -970,6 +980,8 @@ void GoSequencerEditor::timerCallback()
 
         for (auto* slider : { &aiMovesSlider, &aiVariationSlider, &aiSeedSlider })
             slider->setEnabled (ai);
+
+        aiPlayersBox.setEnabled (ai);
 
         refreshGameDisplay();
     }

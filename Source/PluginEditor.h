@@ -110,7 +110,7 @@ private:
     //  colour is a copy, so a scheme change has to walk this list and re-set it
     std::vector<juce::Label*> dimLabels;
 
-    juce::ComboBox rateBox, colourBox, sizeBox, gameRateBox, modeBox, lifeModeBox;
+    juce::ComboBox rateBox, colourBox, sizeBox, gameRateBox, modeBox, lifeModeBox, aiPlayersBox;
     juce::Slider noteSlider, gateSlider, tempoSlider,
                  blackVelocitySlider, whiteVelocitySlider,
                  spreadSlider, lifeSlider,
@@ -132,7 +132,7 @@ private:
                 blackChannelCaption, whiteChannelCaption,
                 modeCaption, spreadCaption, lifeCaption, lifeModeCaption,
                 colourCaption, sizeCaption, gameRateCaption, moveCaption, waveGapCaption,
-                aiMovesCaption, aiVariationCaption, aiSeedCaption, openingCaption;
+                aiPlayersCaption, aiMovesCaption, aiVariationCaption, aiSeedCaption, openingCaption;
     juce::Label hintLabel, gameTitleLabel, gameDetailLabel, openingLabel;
 
     std::unique_ptr<SliderAttachment>   noteAttachment, gateAttachment, tempoAttachment,
@@ -143,7 +143,7 @@ private:
                                         aiMovesAttachment, aiVariationAttachment, aiSeedAttachment;
     std::array<std::unique_ptr<SliderAttachment>, (size_t) headChannels> headChannelAttachments;
     std::unique_ptr<ComboBoxAttachment> rateAttachment, colourAttachment, sizeAttachment, gameRateAttachment,
-                                        modeAttachment, lifeModeAttachment;
+                                        modeAttachment, lifeModeAttachment, aiPlayersAttachment;
     std::unique_ptr<ButtonAttachment>   freeRunAttachment, koAttachment, selfCaptureAttachment,
                                         runGameAttachment, loopGameAttachment, waveReplayAttachment,
                                         aiPlayAttachment;
