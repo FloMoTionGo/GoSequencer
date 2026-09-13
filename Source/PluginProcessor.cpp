@@ -425,6 +425,11 @@ void GoSequencerProcessor::resetPlayhead() noexcept
     for (auto& h : headPos)
         h.store (0, std::memory_order_relaxed);
 
+    //  a playhead jumping back to its corner is a break in the run of steps
+    //  it was walking, so a tie in progress does not carry across it
+    for (auto& t : tieState)
+        t = {};
+
     //  the age clock and the stones' birth stamps are deliberately left alone.
     //  Only the playheads go back to their corners: a stone that was two thirds
     //  through its life when the transport stopped picks up two thirds through,
@@ -1130,27 +1135,58 @@ void GoSequencerProcessor::flushNoteOffs (juce::MidiBuffer& midi, int numSamples
     }
 }
 
-void GoSequencerProcessor::fireCell (int idx, int channelIn, int semitoneOffset, int offsetInBlock,
+void GoSequencerProcessor::fireCell (int idx, int head, int channelIn, int semitoneOffset, int offsetInBlock,
                                      juce::MidiBuffer& midi, double samplesPerStep)
 {
+    auto& tie = tieState[(size_t) juce::jlimit (0, (int) tieState.size() - 1, head)];
+
     if (idx < 0 || idx >= go::maxCells)
+    {
+        tie = {};
         return;
+    }
 
     const auto stone = (go::Stone) stones[(size_t) idx].load (std::memory_order_relaxed);
 
     if (stone == go::Stone::none)
+    {
+        tie = {};
         return;
+    }
 
     //  The one gate every note passes through, for every mode and every head:
     //  outside its lifespan the stone is still on the board and still bound by
     //  the rules, but the playhead goes over it without a sound.
     if (isSpent (idx, stoneLifeParam != nullptr ? stoneLifeParam->get() : maxStoneLife))
+    {
+        tie = {};
         return;
+    }
 
     const bool isBlack = (stone == go::Stone::black);
     const int channel  = juce::jlimit (1, 16, channelIn);
     const int note     = juce::jlimit (0, 127, noteParam->get() + semitoneOffset);
     const int velocity = juce::jlimit (1, 127, isBlack ? blackVelocity->get() : whiteVelocity->get());
+
+    const int gateSamples = juce::jlimit (1, juce::jmax (1, (int) samplesPerStep - 1),
+                                          (int) (gateParam->get() * samplesPerStep));
+
+    //  Same colour as the stone this head just sounded: rather than close that
+    //  note and retrigger, push its note off further out so the two steps
+    //  read as one sustained note for the whole run of same-coloured stones.
+    if (tie.colour == stone && tie.note == note && tie.channel == channel)
+    {
+        for (auto& p : pending)
+        {
+            if (p.active && p.note == note && p.channel == channel)
+            {
+                p.samplesLeft = offsetInBlock + gateSamples;
+                return;
+            }
+        }
+        //  the note it should be sustaining has already ended (a full pending
+        //  pool bumped it early) - fall through and start a fresh one instead
+    }
 
     //  retrigger safety: if this note is still ringing on this channel, close it first
     for (auto& p : pending)
@@ -1164,9 +1200,6 @@ void GoSequencerProcessor::fireCell (int idx, int channelIn, int semitoneOffset,
 
     midi.addEvent (juce::MidiMessage::noteOn (channel, note, (juce::uint8) velocity), offsetInBlock);
 
-    const int gateSamples = juce::jlimit (1, juce::jmax (1, (int) samplesPerStep - 1),
-                                          (int) (gateParam->get() * samplesPerStep));
-
     for (auto& p : pending)
     {
         if (! p.active)
@@ -1178,6 +1211,10 @@ void GoSequencerProcessor::fireCell (int idx, int channelIn, int semitoneOffset,
             break;
         }
     }
+
+    tie.colour  = stone;
+    tie.note    = note;
+    tie.channel = channel;
 }
 
 void GoSequencerProcessor::triggerStep (int stepIndex, int offsetInBlock,
@@ -1189,7 +1226,7 @@ void GoSequencerProcessor::triggerStep (int stepIndex, int offsetInBlock,
     //  and a spent stone both fall out inside fireCell
     const int idx = spiralAt (stepIndex);
 
-    fireCell (idx, colourChannel (idx), 0, offsetInBlock, midi, samplesPerStep);
+    fireCell (idx, 0, colourChannel (idx), 0, offsetInBlock, midi, samplesPerStep);
 }
 
 void GoSequencerProcessor::triggerAt (long long absStep, int offsetInBlock,
@@ -1231,7 +1268,7 @@ void GoSequencerProcessor::triggerAt (long long absStep, int offsetInBlock,
         const int cell = quads ? quadCellAt (h, pos)
                                : spiralAt (go::ringOffset (size, h) + pos);
 
-        fireCell (cell,
+        fireCell (cell, h,
                   headChannelFor (h),                           //  this head's own channel
                   h * spread,                                   //  and its own transpose
                   offsetInBlock, midi, samplesPerStep);

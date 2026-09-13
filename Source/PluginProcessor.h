@@ -299,6 +299,17 @@ private:
         bool active = false;
     };
 
+    //  What each playhead last sounded, so two stones of the same colour in a
+    //  row can be told from a change of colour: fireCell compares the stone
+    //  about to sound against this instead of always closing the previous
+    //  note and opening a new one.
+    struct TieState
+    {
+        go::Stone colour = go::Stone::none;
+        int note = -1;
+        int channel = -1;
+    };
+
     void parameterChanged (const juce::String& parameterID, float newValue) override;
     void handleAsyncUpdate() override;
 
@@ -310,8 +321,11 @@ private:
     int chosenBoardSize() const noexcept;
     /** Sends one note for the stone on idx, if there is one and it is still
         inside its lifespan. Every mode goes through here, so the lifespan gate,
-        the gate length, retrigger safety and the note off queue are shared. */
-    void fireCell (int idx, int channel, int semitoneOffset, int offsetInBlock,
+        the gate length, retrigger safety and the note off queue are shared.
+        head names the playhead this call belongs to (0 for spiral's single
+        head), which is what ties two consecutive same-coloured stones under
+        the same head into one sustained note instead of a retrigger. */
+    void fireCell (int idx, int head, int channel, int semitoneOffset, int offsetInBlock,
                    juce::MidiBuffer& midi, double samplesPerStep);
 
     /** The channel the spiral gives the stone on idx. An empty point falls
@@ -436,6 +450,9 @@ private:
     std::array<PendingNoteOff, 32> pending {};
     //  maxRings is the widest any mode gets: 9 rings beats 4 quadrants
     std::array<std::atomic<int>, go::maxRings> headPos {};
+    //  one tie-tracking slot per playhead - maxHeadChannels is the widest any
+    //  mode gets, and spiral's single head always uses slot 0
+    std::array<TieState, maxHeadChannels> tieState {};
 
     //  Two ways of ageing a stone, both a difference between "then" and "now":
     //  bornAt/ageClock count steps the sequencer has actually played, and
