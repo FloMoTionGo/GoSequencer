@@ -5,25 +5,26 @@ Sequencer plugin, plus how to build it from source. For a quick overview and
 a one-page control table, see [README.md](README.md) — this document goes
 deeper into *how* and *why* each feature behaves the way it does.
 
-> The screenshots below are mockups — illustrative recreations of the
-> plugin's actual dark theme and layout (built from the same colours and
-> geometry as [`Source/BoardComponent.h`](Source/BoardComponent.h) /
-> [`Source/GoBoard.h`](Source/GoBoard.h)), generated with
-> [`docs/mockups/generate.py`](docs/mockups/generate.py) rather than
-> captured from a running build.
+> The screenshots below are mockups generated with
+> [`docs/mockups/generate.py`](docs/mockups/generate.py) rather than captured
+> from a running build, and they still show the plugin's earlier dark,
+> single-column layout. The editor is now light and tabbed — the board on the
+> left, the controls split across the **Sequencer**, **Board**, **Channels**,
+> **Game** and **AI** tabs on the right — so read them for what each control
+> does, not for where it sits on screen.
 
 ## Table of contents
 
 1. [First launch](#1-first-launch)
 2. [The board and the header](#2-the-board-and-the-header)
 3. [Placing and lifting stones](#3-placing-and-lifting-stones)
-4. [The SEQUENCER section](#4-the-sequencer-section)
+4. [The Sequencer and Board tabs](#4-the-sequencer-and-board-tabs)
    - [Step rate, Note, Gate, Free Tempo](#step-rate-note-gate-free-tempo)
    - [Mode, Spread, Stone Life, Life Counts](#mode-spread-stone-life-life-counts)
-   - [Velocities, Board size, Place](#velocities-board-size-place)
+   - [Board size, Place](#board-size-place)
    - [Ko rule, Self capture, Free run, Show path, Clear board](#ko-rule-self-capture-free-run-show-path-clear-board)
-5. [The MIDI CHANNELS fold-out](#5-the-midi-channels-fold-out)
-6. [The GAME RECORD section](#6-the-game-record-section)
+5. [The Channels tab](#5-the-channels-tab)
+6. [The Game and AI tabs](#6-the-game-and-ai-tabs)
    - [AI self-play](#ai-self-play)
    - [Wave Replay](#wave-replay)
 7. [Playhead modes explained in depth](#7-playhead-modes-explained-in-depth)
@@ -48,31 +49,43 @@ Go Sequencer is a **MIDI instrument** plugin (VST3). It produces no audio
 of its own — it emits MIDI notes, so it needs a host that routes those
 notes into a synth/sampler track feeding something that makes sound.
 
-When the window opens you'll see, top to bottom:
+When the window opens you'll see two columns.
 
-- A **header bar**: the plugin name, a small stone swatch showing the
-  colour the *next* click will place, and a status line (step count,
-  capture tally, transport state).
-- The **Go board** itself, the large clickable area.
-- The **SEQUENCER** section: step rate, pitch/gate, playhead mode, stone
-  life, velocities, board size, and rule switches.
-- A collapsible **MIDI CHANNELS** fold-out.
-- A one-line hint reminding you how to interact with the board.
-- The **GAME RECORD** section, for loading and scrubbing an SGF file.
+On the left, the **Go board** itself — the large clickable area, as big as
+the window's height allows — with the two dropdowns that decide what a click
+on it does underneath: **Board** (its size) and **Place** (who plays next).
+They stay there whichever tab is open.
 
-The window is resizable (drag any edge/corner); everything reflows.
+On the right, top to bottom:
+
+- A **header**: the plugin name, a small stone swatch showing the colour the
+  *next* click will place, and under it a status line (step count, capture
+  tally, transport state).
+- A row of five **tabs**, and under it the controls of the open one:
+  - **Sequencer** — step rate, note, gate, playhead mode, stone life, free
+    run and spread.
+  - **Board** — the rule switches, Show path, Clear board, and a reminder of
+    how to interact with the board.
+  - **Channels** — both velocities and every MIDI channel assignment.
+  - **Game** — loading, running and scrubbing an SGF record, and Wave Replay.
+  - **AI** — self-play and the opening it starts from.
+
+Only one tab is shown at a time and every tab takes the same space, so
+switching never resizes the window; the tab you left open is saved with the
+session. The window is resizable (drag the corner), and the board grows with
+it.
 
 ## 2. The board and the header
 
 The board draws every point as a light grid intersection. Placed stones
-render as filled black or white circles. A stone whose lifespan has run out
+render as flat black or white discs. A stone whose lifespan has run out
 (see [§8](#8-stone-lifespan-in-depth)) is drawn **faded** — it's still there
 for the rules, just silent.
 
-**Header status line** (right-aligned, updates live):
+**Header status line** (under the plugin name, updates live):
 
 ```
-step 14/81   captured  black 3  white 1   stopped
+step 14/81  ·  captured  black 3  white 1  ·  stopped
 ```
 
 - `step N/total` — where the (first) playhead currently sits in its cycle.
@@ -104,9 +117,16 @@ A stone you place is timestamped internally the moment it lands (see
 [§8](#8-stone-lifespan-in-depth)), so its lifespan always counts from when
 *it* was placed, not from when the transport started.
 
-## 4. The SEQUENCER section
+## 4. The Sequencer and Board tabs
 
-![The SEQUENCER panel](docs/mockups/sequencer-panel.png)
+![The sequencer controls, in the earlier single-column layout](docs/mockups/sequencer-panel.png)
+
+The **Sequencer** tab holds the clock and the pitch: step rate, note, gate,
+mode, stone life and life counts, free run and free tempo, and spread. The
+**Board** tab holds the rules and the board's own switches: Ko rule, Self
+capture, Show path and Clear board. **Board** size and **Place** are not on a
+tab at all — they sit under the board, since they decide what a click on it
+does.
 
 ### Step rate, Note, Gate, Free Tempo
 
@@ -135,14 +155,15 @@ A stone you place is timestamped internally the moment it lands (see
 - **Life Counts** — whether Stone Life is measured in `Steps` of the
   sequencer clock or `Placements` (stones laid down since).
 
-### Velocities, Board size, Place
+### Board size, Place
 
-- **Black Velocity** / **White Velocity** — fixed MIDI velocity (1–127)
-  sent for every note of that colour, in every mode. Doesn't depend on how
-  hard you "click" — this is a step sequencer, not a performance
-  controller.
-- **Board** — `9 x 9` or `13 x 13`. **Changing this clears the board** —
-  the two sizes address different points, so nothing to carry over.
+These two sit under the board, not on a tab.
+
+- **Board** — `9 x 9`, `13 x 13` or `19 x 19`. **Changing this clears the
+  board** — the sizes address different points, so nothing to carry over.
+  The full 19×19 board draws all nine star points and runs its coordinates
+  out to `T`; a one-lap Spiral on it is 361 steps, so it suits the faster
+  step rates or Polyrhythm/Quads.
 - **Place** — who a left-click on an empty point plays next: `Alternate`
   (black/white swap each move, as in a real game), `Black` (always plays
   black), or `White` (always plays white). The header swatch always shows
@@ -171,25 +192,23 @@ A stone you place is timestamped internally the moment it lands (see
   playhead's route (the spiral / ring / quadrant path it's following).
   Good for understanding a mode before you commit stones to it.
 - **Clear board** — lifts every stone and resets capture counts. This does
-  *not* unload a loaded game record; use **Unload** in the GAME RECORD
-  section for that.
+  *not* unload a loaded game record; use **Unload** on the Game tab for
+  that.
 
-## 5. The MIDI CHANNELS fold-out
+## 5. The Channels tab
 
-![The MIDI CHANNELS fold-out, collapsed and open](docs/mockups/channels-foldout.png)
+Everything that decides how loud a note goes out, and on which channel:
 
-Click the **▸ MIDI CHANNELS** header (it expands to **▾ MIDI CHANNELS**) to
-reveal per-colour and per-playhead channel assignments. It stays folded by
-default and its open/closed state is **saved with your session**, so it
-doesn't clutter every project unless you want it to.
-
-Inside:
-
+- **Black Velocity** / **White Velocity** — fixed MIDI velocity (1–127)
+  sent for every note of that colour, in every mode. Doesn't depend on how
+  hard you "click" — this is a step sequencer, not a performance
+  controller.
 - **Black Channel** / **White Channel** (1–16) — used only in **Spiral**
   mode, where routing is by stone colour.
-- **Head 1 Channel** … **Head 6 Channel** (1–16) — used only in
-  **Polyrhythm** / **Quads** modes, one slider per playhead. A 9×9 board
-  uses heads 1–4; a 13×13 board's Polyrhythm mode uses all 6.
+- **Head 1** … **Head 9** (1–16) — used only in
+  **Polyrhythm** / **Quads** modes, one slider per playhead. Quads always
+  uses heads 1–4, as does Polyrhythm on a 9×9; a 13×13's Polyrhythm uses
+  heads 1–6, and a 19×19's uses all 9. They start out on channels 1–9.
 
 Whichever set doesn't apply to the current **Mode**/**Board** combination is
 greyed out (not hidden) so you can see and pre-set values you're not
@@ -199,19 +218,20 @@ Every channel is assigned **outright** — nothing is derived from another
 slider. That means two heads (or black and white) can deliberately share a
 channel, or the whole board can sit on channel 1, with no side effects.
 
-## 6. The GAME RECORD section
+## 6. The Game and AI tabs
 
-![The GAME RECORD panel with a record loaded](docs/mockups/game-record-panel.png)
+![The game record controls, in the earlier single-column layout](docs/mockups/game-record-panel.png)
 
-This lets you replay a real Go game's moves onto the board over time,
-independent of (and simultaneously with) the step sequencer's own clock —
-so the pattern keeps getting rewritten as the game plays.
+The **Game** tab lets you replay a real Go game's moves onto the board over
+time, independent of (and simultaneously with) the step sequencer's own
+clock — so the pattern keeps getting rewritten as the game plays.
 
-1. **Load SGF...** opens a file picker filtered to `*.sgf`. Alternatively,
-   **drag and drop** an `.sgf` file anywhere onto the plugin window — the
-   whole window highlights while a file is dragged over it.
+1. **Load SGF…** opens a file picker filtered to `*.sgf`. Alternatively,
+   **drag and drop** an `.sgf` file anywhere onto the plugin window,
+   whichever tab is open — the window is outlined while a file is dragged
+   over it.
 2. Once loaded, the game's **title** and **detail** (players, result, etc.,
-   as much as the SGF file provides) appear just above the transport row.
+   as much as the SGF file provides) appear at the top of the tab.
    A sample file is included at
    [`sgf/89706031-145-Gruener123-FloMo.sgf`](sgf/89706031-145-Gruener123-FloMo.sgf).
 3. **Move rate** sets how fast recorded moves are played back, independent
@@ -224,7 +244,7 @@ so the pattern keeps getting rewritten as the game plays.
 6. The **position slider** ("move N / total") shows and lets you scrub to
    any point in the game directly — dragging it rebuilds the board from
    move 0 up to that point instantly.
-7. **◀** / **▶** step exactly one move backward/forward.
+7. **‹** / **›** step exactly one move backward/forward.
 8. **Unload** clears the loaded record (the board itself is left as it
    stood — it does *not* clear stones, unlike **Clear board**).
 
@@ -235,11 +255,11 @@ captures from the real game show up in the header's capture tally too.
 ### AI self-play
 
 Instead of loading a record, the plugin can write one. Turn on **AI self-play**
-and two players take the board — game after game, for as long as **Loop** is
-on, with no file and nothing to connect to. Everything else in this section
-keeps working unchanged: a generated game *is* a record, so **Move Rate**,
-**Run game**, **Loop**, the position slider and **◀** / **▶** all behave
-exactly as they do for an `.sgf`.
+on the **AI** tab and two players take the board — game after game, for as long
+as **Loop** is on, with no file and nothing to connect to. Everything on the
+**Game** tab keeps working unchanged: a generated game *is* a record, so
+**Move Rate**, **Run game**, **Loop**, the position slider and **‹** / **›**
+all behave exactly as they do for an `.sgf`.
 
 ![One run of self-play games](docs/mockups/self-play.gif)
 
@@ -247,17 +267,23 @@ exactly as they do for an `.sgf`.
 and diverges from the eleventh. That is deliberate, and it is the musical point
 of the feature: the sequencer turns position into pitch, so a fixed opening is a
 fixed motif — you hear the same figure at the start of every game, and then a
-variation on it that never repeats. The built-in one is real play, not a made-up
-pattern: the first ten moves of `sgf/nine_dan_9x9_43610191.sgf` on a 9×9, and of
-`sgf/Blackie_BIBA_13x13_25655059.sgf` on a 13×13.
+variation on it that never repeats. On the two small boards the built-in one is
+real play, not a made-up pattern: the first ten moves of
+`sgf/nine_dan_9x9_43610191.sgf` on a 9×9, and of
+`sgf/Blackie_BIBA_13x13_25655059.sgf` on a 13×13. There is no 19×19 record to
+take one from, so the full board opens on a textbook line: Q16, D4, Q4, D16 —
+the four star points — then the commonest star-point joseki twice over (low
+approach, small knight's move, two-space extension): F17, C14, J17 in the upper
+left, R6, O3, R9 in the lower right.
 
-**Playing your own opening.** Two buttons under the self-play row set where
-those ten moves come from:
+**Playing your own opening.** The two buttons under the three settings on the
+**AI** tab set where those ten moves come from:
 
-1. Press **Clear board**, and set **Place** to *Alternate*.
+1. Press **Clear board** (on the **Board** tab), and set **Place** — under the
+   board — to *Alternate*.
 2. Click out your ten stones — your joseki, a shape you like the sound of,
    anything legal.
-3. Press **From board**. The line beside the buttons changes from *the book
+3. Press **From board**. The line under the buttons changes from *the book
    line* to *your ten moves*, and every game of every run from then on starts
    with them.
 4. **Use book** puts the built-in opening back.
@@ -276,7 +302,7 @@ it lands on the next game rather than cutting the current one short.
 
 The opening is saved with the session, and it belongs to the board size it was
 played on — the same points mean something else on a 13×13. Changing size
-therefore falls back to the built-in book for that board, and the line beside
+therefore falls back to the built-in book for that board, and the line under
 the buttons says so.
 
 **The two players** are heuristics rather than a search or a neural net. Each
@@ -296,7 +322,7 @@ that, two heuristic players take their own groups apart in the endgame and the
 board empties out — there is a test for exactly this in
 [`tests/GoRulesTests.cpp`](tests/GoRulesTests.cpp).
 
-**The three settings** sit next to the switch:
+**The three settings** sit with the switch on the **AI** tab:
 
 - **Game length** — 12 to 160 moves, the ten book moves included. 60 is the
   default: long enough for a middlegame fight, short enough that the opening
@@ -394,7 +420,7 @@ Starts at the top-left corner and spirals clockwise, winding inward until
 it reaches *tengen* (the centre point), then wraps back to the start. This
 is the simplest mode — one voice, tracing the whole board once per cycle.
 Routing is **by stone colour** (Black Channel / White Channel), which is
-why the MIDI Channels fold-out shows those two sliders active here.
+why the Channels tab shows those two sliders active here.
 
 ![Spiral mode: one playhead winding from a corner to tengen](docs/mockups/spiral-mode.png)
 
@@ -403,12 +429,18 @@ why the MIDI Channels fold-out shows those two sliders active here.
 The board is split into four quadrant blocks, each centred on that
 quadrant's star point (the 3-3 point on a 9×9, 4-4 on a 13×13). The four
 blocks are sized so they exactly meet along the board's middle row and
-column — together they cover every point once.
+column — together they cover every point, the shared middle cross twice
+(tengen four times).
 
-- **Quads out**: each playhead starts at its quadrant's star point and
-  spirals *outward* toward the block's edges.
+On a **19×19** the blocks are 10×10 (100 steps each). An even-sided block has
+no single centre point, so each spiral winds in to the square of four points
+in the middle of its corner — the 5-5 to 6-6 points — and the 4-4 star point
+sits on the ring just outside that.
+
+- **Quads out**: each playhead starts at the middle of its block (the star
+  point, on 9×9 and 13×13) and spirals *outward* toward the block's edges.
 - **Quads in**: each playhead starts at the block's outer edge and spirals
-  *inward* toward the star point.
+  *inward* toward the middle.
 
 All four heads share the same step clock, so they move in lock-step —
 useful for symmetric, four-voice patterns that stay rhythmically aligned.
@@ -416,16 +448,18 @@ Routing is **by playhead** (Head 1–4 Channel).
 
 ![Quads mode: one playhead per quadrant, meeting at the centre](docs/mockups/quads-mode.png)
 
-### Polyrhythm (4 or 6 playheads)
+### Polyrhythm (4, 6 or 9 playheads)
 
 One playhead per **concentric ring** of the board (tengen is excluded — it
 has nowhere to rotate to). A 9×9 board has 4 rings (32, 24, 16, 8 points
-around); a 13×13 has 6 rings (48, 40, 32, 24, 16, 8 points).
+around); a 13×13 has 6 rings (48, 40, 32, 24, 16, 8 points); a 19×19 has 9
+rings (72, 64, 56, 48, 40, 32, 24, 16, 8 points).
 
 Every ring shares the same step clock, but because the rings have
 different lengths, they drift in and out of phase with each other — they
 only all land back at their starting point together every 96 steps on a
-9×9 (480 on a 13×13). Each ring has its own **channel** and its own
+9×9 (480 on a 13×13, and 20,160 on a 19×19 — at 1/16 and 120 BPM, exactly
+42 minutes). Each ring has its own **channel** and its own
 **pitch transpose** (Spread), and — critically — **all rings sound
 together**, so a fully-populated board plays as an evolving chord rather
 than a single melodic line. This is the mode to reach for if you want
@@ -532,7 +566,7 @@ that support inter-track MIDI routing.
 Every control here is a JUCE `AudioProcessorValueTreeState` parameter, so
 your host's normal plugin-state saving covers all of it automatically: the
 board (which stones are placed), rate/note/gate, mode, all channel
-assignments, rule switches, the MIDI Channels fold-out's open/closed state,
+assignments, rule switches, which tab was left open,
 and — separately — the loaded game record and its current scrub position.
 Saving your DAW project (or a plugin preset, if your host supports them)
 recalls the sequencer exactly as you left it, board included.

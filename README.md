@@ -32,7 +32,7 @@ overview.
 
 ## How it works
 
-The board is a real Go board — 9×9 or 13×13 — and clicking on it plays a
+The board is a real Go board — 9×9, 13×13 or 19×19 — and clicking on it plays a
 stone under real Go rules: captures, suicide, and the ko rule all apply (the
 last two can be switched off). Nothing about the *sound* depends on
 understanding Go, though; you can just click points and listen.
@@ -50,8 +50,8 @@ Set with the **Mode** control:
 | Mode | Playheads | Path |
 |---|---|---|
 | **Spiral** | 1 | Clockwise from the top-left corner, winding inward to *tengen* (centre). Black and white are routed on separate channels. |
-| **Quads out** / **Quads in** | 4 | One playhead per quadrant, each spiralling around that quadrant's star point (the 3-3 point on 9×9). The four blocks share the middle row/column, so all four heads meet in the centre at once. "Out" winds outward from the star point; "in" winds inward toward it. |
-| **Polyrhythm** | 4 (9×9) or 6 (13×13) | One playhead per concentric ring around the board (tengen itself isn't a ring). All heads share the same step clock, but the rings have different lengths — 32/24/16/8 points on a 9×9 — so they drift in and out of phase and only realign every 96 steps (480 on 13×13). Every ring has its own MIDI channel and its own pitch transpose, and they all sound together: the board plays as a chord, not a line. |
+| **Quads out** / **Quads in** | 4 | One playhead per quadrant, each spiralling around that quadrant's star point (the 3-3 point on 9×9, 4-4 on 13×13). On a 19×19 the blocks are 10×10 — an even side, with no single centre — so each spiral winds around the four points just inside the 4-4 star point instead. The four blocks share the middle row/column, so all four heads meet in the centre at once. "Out" winds outward from the middle of the block; "in" winds inward toward it. |
+| **Polyrhythm** | 4 (9×9), 6 (13×13) or 9 (19×19) | One playhead per concentric ring around the board (tengen itself isn't a ring). All heads share the same step clock, but the rings have different lengths — 32/24/16/8 points on a 9×9 — so they drift in and out of phase and only realign every 96 steps (480 on 13×13, 20,160 on 19×19). Every ring has its own MIDI channel and its own pitch transpose, and they all sound together: the board plays as a chord, not a line. |
 
 ## Stone lifespan
 
@@ -75,7 +75,7 @@ rather than resetting the whole board's clock.
 
 | Control | What it does |
 |---|---|
-| **Board** | 9×9 or 13×13. Changing it clears the board. |
+| **Board** | 9×9, 13×13 or 19×19. Changing it clears the board. |
 | **Mode** | Spiral / Polyrhythm / Quads out / Quads in — see above. |
 | **Place** | Alternate / Black / White — who a click plays next. |
 | **Rate** | Step clock rate, synced to host tempo (1/1 down to 1/32T). |
@@ -83,7 +83,7 @@ rather than resetting the whole board's clock.
 | **Note** | Base pitch; board position offsets from here. |
 | **Gate** | Note length as a percentage of one step. |
 | **Black/White Channel** | MIDI channel per colour (Spiral mode). |
-| **Head 1–6 Channel** | MIDI channel per playhead (multi-head modes). |
+| **Head 1–9 Channel** | MIDI channel per playhead (multi-head modes). |
 | **Black/White Velocity** | Fixed velocity per colour. |
 | **Spread** | Semitone transpose per ring (Polyrhythm). |
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
@@ -105,7 +105,7 @@ real game onto the board:
 - The moves play at their own speed (set by **Game Rate**: 1/4 note up to
   "one lap"), independent of the sequencer's step clock — both run at once,
   so the pattern is continuously rewritten by the game as it plays.
-- **Run** / **Loop** start and repeat playback; **◀ ▶** step one move at a
+- **Run** / **Loop** start and repeat playback; **‹ ›** step one move at a
   time; **Unload** clears the record and leaves the board as it stood.
 - A sample game is included at
   [`sgf/89706031-145-Gruener123-FloMo.sgf`](sgf/89706031-145-Gruener123-FloMo.sgf)
@@ -132,7 +132,11 @@ is the point of it here: the sequencer reads position as pitch, so a fixed
 opening is a fixed motif, and the sixty moves after it are a variation on it
 that never repeats. Out of the box that opening is not invented either — it is
 the first ten moves of [`sgf/nine_dan_9x9_43610191.sgf`](sgf/) on a 9×9 and of
-[`sgf/Blackie_BIBA_13x13_25655059.sgf`](sgf/) on a 13×13.
+[`sgf/Blackie_BIBA_13x13_25655059.sgf`](sgf/) on a 13×13. There's no 19×19
+record to take one from, so the full board opens on a textbook line instead:
+the four star points, then the commonest star-point joseki (low approach, small
+knight's move, two-space extension) in the upper left and again in the lower
+right.
 
 **Or play your own.** Clear the board, click out ten stones with **Place** on
 *Alternate*, and press **From board**: those ten become the opening of every
@@ -152,9 +156,9 @@ takes the third and fourth lines, fights when there is something to take. White
 They are heuristics, not a search or a net: every legal point is scored on
 captures, saving its own stones from atari, cutting, connecting, staying near
 the last move and keeping off the first line, and one of the best twelve is
-drawn. A whole game takes well under a millisecond, on the message thread, one
-game ahead of the one playing — so the swap at the end of a game costs the
-audio thread nothing.
+drawn. A default 60-move game takes about a millisecond to write on a 9×9 and
+around 6 ms on a 19×19, on the message thread, one game ahead of the one
+playing — so the swap at the end of a game costs the audio thread nothing.
 
 **The three settings.**
 
