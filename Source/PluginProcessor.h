@@ -212,8 +212,9 @@ public:
     //  the next one. If that request has not been answered by the time the game
     //  ends, nothing breaks: the record simply repeats, as it would have before.
     //
-    //  Length, Variation and Seed are read when a game is generated, so a change
-    //  to any of them lands on the next game rather than interrupting this one.
+    //  Players, Length, Variation and Seed are read when a game is generated, so
+    //  a change to any of them lands on the next game rather than interrupting
+    //  this one.
     //  Switching AI Self-Play off and on starts a fresh run from game 1.
 
     bool aiSelfPlay()   const noexcept { return aiActive.load (std::memory_order_relaxed); }
@@ -288,6 +289,7 @@ public:
     static juce::StringArray boardSizeNames();
     static juce::StringArray playModeNames();
     static juce::StringArray lifeModeNames();
+    static juce::StringArray aiPlayersNames();
 
 private:
     //==============================================================================
@@ -503,6 +505,7 @@ private:
     juce::AudioParameterInt*    aiMovesParam     = nullptr;
     juce::AudioParameterInt*    aiVariationParam = nullptr;
     juce::AudioParameterInt*    aiSeedParam      = nullptr;
+    juce::AudioParameterChoice* aiPlayersParam   = nullptr;
 
     //  re-entrancy guard: clampStoneLifeToWaveGap() sets stoneLifeParam,
     //  which would otherwise trigger parameterChanged() straight back into it

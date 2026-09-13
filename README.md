@@ -14,6 +14,13 @@ For a complete, tutorial-style walkthrough of every control and behaviour,
 see **[how-to-use-it.md](how-to-use-it.md)**. This README is the quick
 overview.
 
+> **Credit — Leela.** The *reading* self-play players are built on the tactical
+> ideas of [**Leela**](https://github.com/gcp/Leela), the Go engine by
+> Gian-Carlo Pascutto (MIT licence). Despite the "AI" on the tab, they are plain
+> algorithms with fixed weights: no neural network, no machine-learning model,
+> no training data, and nothing that learns while the plugin runs. See
+> [Where the reading players come from](#where-the-reading-players-come-from-leela).
+
 ## Table of contents
 
 - [How it works](#how-it-works)
@@ -22,6 +29,7 @@ overview.
 - [Controls](#controls)
 - [Loading a game record (SGF)](#loading-a-game-record-sgf)
 - [AI self-play](#ai-self-play)
+- [Where the reading players come from (Leela)](#where-the-reading-players-come-from-leela)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
 - [Building it](#building-it)
   - [Requirements](#requirements)
@@ -88,6 +96,7 @@ rather than resetting the whole board's clock.
 | **Spread** | Semitone transpose per ring (Polyrhythm). |
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
 | **AI Self-Play** | Two built-in players write the record instead of loading one — see below. |
+| **Players** | *Reading* (the default) or *Classic* — which generation of the two players writes the games. |
 | **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
 | **From board** / **Use book** | Take the ten stones you played as the opening every game starts from, or go back to the built-in one. |
 | **Ko Rule** | Forbid immediately recapturing the previous position. |
@@ -147,27 +156,62 @@ It is saved with the session, and it belongs to the board it was played on: a
 
 ![One run, three games](docs/mockups/self-play.gif)
 
-**The two players.** Black (*Kuro*) plays territorially — connects, extends,
-takes the third and fourth lines, fights when there is something to take. White
-(*Shiro*) fights — contact, cuts and ataris are worth more to it than shape is.
-They are heuristics, not a search or a net: every legal point is scored on
-captures, saving its own stones from atari, cutting, connecting, staying near
-the last move and keeping off the first line, and one of the best twelve is
-drawn. A default 60-move game takes about a millisecond to write on a 9×9 and
-around 6 ms on a 19×19, on the message thread, one game ahead of the one
-playing — so the swap at the end of a game costs the audio thread nothing.
+**Two generations of players.** Black is *Kuro* and White is *Shiro* in both,
+and both keep their temperaments: Kuro plays territorially — keeps its stones
+safe and connected, takes the third line, fights when there is something to
+take — while Shiro fights: ataris, cuts and contact are worth more to it than
+shape. **Players** on the AI tab picks which generation writes the games:
 
-**The three settings.**
+- **Reading** (the default for a new instance) — before choosing, they read the
+  board as chains of stones: what a move captures or saves, which self-atari is
+  a blunder and which a throw-in, whether an atari starts a ladder that catches
+  the stones and whether running out of atari runs into one, the vital points
+  of small eye spaces, which liberties to fill in a race, which eyes a move
+  makes or spoils, and whose area a point already lies in. These ideas come from
+  the Go engine [**Leela**](https://github.com/gcp/Leela) — see
+  [below](#where-the-reading-players-come-from-leela).
+- **Classic** — the original pair: every legal point scored on captures, saving
+  stones from atari, cutting, connecting, staying near the last move and keeping
+  off the first line, with nothing read ahead.
 
+Neither generation is AI in the machine-learning sense: both are algorithms
+with fixed weights, and one of the best twelve points is drawn with the seeded
+random number generator. Played out to the end against each other (komi 7.5,
+area scoring, variation 35, on seeds the weights were never tuned on), the
+reading pair are clearly the stronger players:
+
+| | 9×9, 1000 games each | 13×13, 300 games each |
+|---|---|---|
+| classic Kuro vs classic Shiro | Black wins 38%, by −5.3 on average | Black wins 38%, −9.0 |
+| **reading** Kuro vs classic Shiro | Black wins 58%, +6.8 | Black wins 83%, +32.5 |
+| classic Kuro vs **reading** Shiro | Black wins 15%, −26.6 | Black wins 2%, −48.2 |
+
+What you *hear* changes less than how well they play. Over sixty moves both write
+records of the same shape — about as many stones left standing, an average jump
+of about three points from one move to the next — but the reading pair lose
+fewer stones, rarely touch the first line on the larger boards, and wander over
+a few more points.
+
+Both generations write their games on the message thread, one game ahead of the
+one playing, so the swap at the end of a game costs the audio thread nothing.
+Measured with an optimised build, a default 60-move game takes about 1 ms
+(classic) or 2 ms (reading) on a 9×9 and about 7 ms on a 19×19; the longest,
+160 moves on a 19×19, about 19 ms or 25 ms.
+
+**The four settings.**
+
+- **Players** — *Reading* or *Classic*, as above.
 - **Game Length** — 12 to 160 moves. The ten book moves are part of it.
 - **Variation** — 0% plays the best point it can see every time, so the run is
   one game repeating. 100% picks freely among the best twelve. The default 35%
   keeps the play recognisable and the games different.
 - **Seed** — names the run. The same seed plays the same games in the same
   order, on any machine, and a saved session comes back on the game it was
-  left on (it is regenerated, not stored).
+  left on (it is regenerated, not stored). The players are part of that name:
+  the two generations play different games from one seed, and a session saved
+  before there was a choice comes back with the classic pair.
 
-All three are read when a game is *written*, so changing one lands on the next
+All four are read when a game is *written*, so changing one lands on the next
 game rather than cutting the current one short. To restart a run immediately,
 switch AI self-play off and on.
 
@@ -175,14 +219,59 @@ Loading an .sgf or pressing **Unload** hands the board back and switches
 self-play off. **Wave Replay** holds a run on one game while it is on — the
 wave is rippling stones the next game would not have played.
 
-**Exporting the games.** `GoAiDump` plays the same two players outside the
-plugin and writes ordinary `.sgf` files, which load straight back into it (or
-into any Go viewer):
+**Exporting the games.** `GoAiDump` plays the same players outside the plugin
+and writes ordinary `.sgf` files, which load straight back into it (or into any
+Go viewer). It plays the classic pair unless `--players reading` says otherwise:
 
 ```powershell
 cmake --build build --config Release --target GoAiDump
-.\build\Release\GoAiDump.exe --games 6 --seed 1 --out sgf\selfplay
+.\build\Release\GoAiDump.exe --games 6 --seed 1 --players reading --out sgf\selfplay
 ```
+
+## Where the reading players come from (Leela)
+
+The reading players owe their knowledge of Go tactics to
+**[Leela](https://github.com/gcp/Leela)**, the open-source Go engine by
+Gian-Carlo Pascutto (MIT licence, © 2007–2020), whose code later became the
+starting point of Leela Zero. Leela's source was studied for this; none of it
+was copied. Each idea taken from it was written again from scratch — in whole
+numbers, on the plugin's own rules engine — in
+[`Source/GoTactics.h`](Source/GoTactics.h) and [`Source/GoAI.h`](Source/GoAI.h).
+
+**What was taken from Leela** — the facts its move generator looks at when it
+decides which moves are worth trying:
+
+- how many stones a move captures, and how many of its own it saves from atari —
+  and that a rescue which runs into a working ladder saves nothing;
+- self-atari, told apart from a throw-in against a group that is short of
+  liberties itself, and from handing over a whole group;
+- ladders, read out both for the side giving atari and for the side running;
+- liberty races (semeai): which liberties to fill when neither side can gain any;
+- the vital points of the eye shapes that can be killed — the straight and bent
+  three, the pyramid four, the bulky and crossed five, the rabbity six;
+- Bouzy's influence map (five dilations, twenty-one erosions), which Leela uses
+  to tell whose area a point is.
+
+**What was left out** — what actually makes Leela a strong program: its Monte
+Carlo tree search (thousands of simulated games for every move), its pattern
+tables learned from game records, and its neural networks trained on recorded
+games. They take far more work than a sequencer should spend between two notes,
+and they rest on floating point and learned data that could not keep the
+promise that a seed names the same game on every machine.
+
+**No AI, no training.** The "AI" on the tab means that the plugin plays both
+sides of a game by itself. It does not mean artificial intelligence in the
+machine-learning sense, and neither pair of players uses any. They are
+algorithms: each legal point gets a score from rules like the ones above, the
+reading pair also read ladders out move by move, and one of the best points is
+drawn with the seeded random number generator. There is no neural network, no
+model and no training data, and nothing learns — not while you play, not
+between sessions. The weights are ordinary numbers in
+[`Source/GoAI.h`](Source/GoAI.h). The reading pair's were set by hand and then
+adjusted once, offline, by playing thousands of test games between versions and
+keeping the changes that won (`tools/GoAiTune.cpp`, a local tool like
+`GoAiDump`); after that they were fixed, which is also what keeps every seed
+reproducible.
 
 ## Using it in Ableton Live
 
@@ -279,7 +368,8 @@ GoSequencer/
 │   ├── PluginEditor.*      # Plugin UI (sliders, combo boxes, board view)
 │   ├── BoardComponent.*    # The clickable Go board widget
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE)
-│   ├── GoAI.h              # The two self-play players (no JUCE, no floats)
+│   ├── GoAI.h              # The self-play players, classic and reading (no JUCE, no floats)
+│   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas
 │   └── SgfParser.h         # Minimal SGF (game record) reader
 ├── sgf/                    # Sample game records for trying SGF playback
 ├── tools/
