@@ -23,4 +23,7 @@ Thumbs.db
 tests/*.exe
 tests/*.o
 ideas.md
+
+# tools for local use
 sgf/*
+tools/*
