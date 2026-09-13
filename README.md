@@ -262,9 +262,7 @@ it to `~/Library/Audio/Plug-Ins/VST3/`.
 
 The Go rules (captures, suicide, ko, scoring) live in a header
 ([`Source/GoBoard.h`](Source/GoBoard.h)) that's plain C++ with no JUCE
-dependency, so it can be unit-tested without loading a plugin host. The test
-replays the included sample SGF game through the rules engine and checks the
-result.
+dependency, so it can be unit-tested without loading a plugin host.
 
 ```powershell
 cmake --build build --target GoRulesTests --config Release

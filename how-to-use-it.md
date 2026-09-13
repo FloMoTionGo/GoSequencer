@@ -633,8 +633,7 @@ cmake --build build --target GoSequencer_VST3 -j
 ### Running the rules-engine tests
 
 [`Source/GoBoard.h`](Source/GoBoard.h) — captures, suicide, ko, scoring —
-has no JUCE dependency, so it's tested standalone. The test replays the
-included sample SGF game through the engine and checks the result matches.
+has no JUCE dependency, so it's tested standalone.
 
 ```powershell
 cmake --build build --target GoRulesTests --config Release
