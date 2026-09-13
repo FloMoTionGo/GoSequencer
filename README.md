@@ -31,6 +31,7 @@ overview.
 - [AI self-play](#ai-self-play)
 - [Where the reading players come from (Leela)](#where-the-reading-players-come-from-leela)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
+  - [One track per channel: the MIDI out port (needs loopMIDI)](#one-track-per-channel-the-midi-out-port-needs-loopmidi)
 - [Building it](#building-it)
   - [Requirements](#requirements)
   - [Windows (MSVC + CMake)](#windows-msvc--cmake)
@@ -92,6 +93,7 @@ rather than resetting the whole board's clock.
 | **Gate** | Note length as a percentage of one step. |
 | **Black/White Channel** | MIDI channel per colour (Spiral mode). |
 | **Head 1–9 Channel** | MIDI channel per playhead (multi-head modes). |
+| **MIDI out port** | Also sends every note to a MIDI port of your system, channels intact, so each channel can go to its own track in Live. *Off* by default; needs [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) on Windows — see [below](#one-track-per-channel-the-midi-out-port-needs-loopmidi). |
 | **Black/White Velocity** | Fixed velocity per colour. |
 | **Spread** | Semitone transpose per ring (Polyrhythm). |
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
@@ -288,6 +290,32 @@ generator:
 The same routing works in any host that lets you pipe one track's MIDI
 output into another (Cubase, Studio One, Reaper, Bitwig, …).
 
+### One track per channel: the MIDI out port (needs loopMIDI)
+
+The routing above can't split the channels apart in Live. **Live puts every
+note a plugin sends onto channel 1** before another track receives it, so the
+playheads (or black and white) can't go to separate tracks, or to the separate
+parts of a multitimbral instrument like SINE Player or Kontakt. The channels
+leave Go Sequencer correctly; Live drops them.
+
+A MIDI *port* keeps them, and Live can filter a port by channel. So Go
+Sequencer can send its notes to a port as well as to the host:
+
+1. **Requirement for this feature only:** install and start
+   **[loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html)**
+   (Windows, free) and create a port, e.g. `GoSeq`. Nothing else in the plugin
+   needs it.
+2. In Live's *Preferences → Link, Tempo & MIDI*, turn **Track** on for the
+   `GoSeq` **input**.
+3. On Go Sequencer's **Channels** tab, set **MIDI out port** to `GoSeq`.
+4. For each channel, make a MIDI track with **MIDI From** → `GoSeq` →
+   **Ch. N** and Monitor **In**. Put the instrument on that track, or set
+   **MIDI To** to a multitimbral instrument's track and pick the channel.
+
+Freeze and Export don't capture the port (they render offline), so record the
+tracks into clips first. The full walkthrough is in
+[how-to-use-it.md](how-to-use-it.md#one-track-per-channel-the-midi-out-port-needs-loopmidi).
+
 ## Building it
 
 ### Requirements
@@ -297,6 +325,11 @@ output into another (Cubase, Studio One, Reaper, Bitwig, …).
   or GCC/Clang on Linux
 - A [JUCE](https://github.com/juce-framework/JUCE) checkout (JUCE itself is
   **not vendored** in this repo)
+
+Running the plugin needs nothing else, except
+[loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) on Windows if
+you use the optional **MIDI out port** (see
+[above](#one-track-per-channel-the-midi-out-port-needs-loopmidi)).
 
 ### Windows (MSVC + CMake)
 
@@ -367,6 +400,7 @@ GoSequencer/
 │   ├── PluginProcessor.*   # Audio/MIDI engine: playheads, clock, params
 │   ├── PluginEditor.*      # Plugin UI (sliders, combo boxes, board view)
 │   ├── BoardComponent.*    # The clickable Go board widget
+│   ├── MidiPortOut.*       # The optional MIDI out port: notes to a system port, channels intact
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE)
 │   ├── GoAI.h              # The self-play players, classic and reading (no JUCE, no floats)
 │   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas

@@ -32,6 +32,7 @@ deeper into *how* and *why* each feature behaves the way it does.
 8. [Stone lifespan in depth](#8-stone-lifespan-in-depth)
 9. [Go rules reference](#9-go-rules-reference)
 10. [Routing MIDI out (Ableton Live and others)](#10-routing-midi-out-ableton-live-and-others)
+    - [One track per channel: the MIDI out port (needs loopMIDI)](#one-track-per-channel-the-midi-out-port-needs-loopmidi)
 11. [Saving and recalling sessions](#11-saving-and-recalling-sessions)
 12. [Building it from source](#12-building-it-from-source)
     - [Requirements](#requirements)
@@ -67,7 +68,8 @@ On the right, top to bottom:
     run and spread.
   - **Board** — the rule switches, Show path, Clear board, and a reminder of
     how to interact with the board.
-  - **Channels** — both velocities and every MIDI channel assignment.
+  - **Channels** — both velocities, every MIDI channel assignment, and the
+    optional MIDI out port.
   - **Game** — loading, running and scrubbing an SGF record, and Wave Replay.
   - **AI** — self-play and the opening it starts from.
 
@@ -210,6 +212,17 @@ Everything that decides how loud a note goes out, and on which channel:
   **Polyrhythm** / **Quads** modes, one slider per playhead. Quads always
   uses heads 1–4, as does Polyrhythm on a 9×9; a 13×13's Polyrhythm uses
   heads 1–6, and a 19×19's uses all 9. They start out on channels 1–9.
+- **MIDI out port** — sends every note to one of your system's MIDI ports
+  *as well as* to the host, on exactly the channels set above. **Off** (the
+  default) sends to the host only and uses no port at all. It is there for
+  hosts that throw the channel away on their own track-to-track routing —
+  Ableton Live does — and on Windows it needs a virtual port from
+  **loopMIDI**: see
+  [One track per channel](#one-track-per-channel-the-midi-out-port-needs-loopmidi).
+  The line under it says whether the port is open (*also sending to GoSeq…*)
+  or not there (*waiting for GoSeq – is loopMIDI running?*, in the accent
+  colour). The list is read again every time you open it, so a port created
+  while the plugin window is open shows up without reopening it.
 
 Whichever set doesn't apply to the current **Mode**/**Board** combination is
 greyed out (not hidden) so you can see and pre-set values you're not
@@ -641,12 +654,85 @@ The same pattern (route one track's MIDI output into another track's
 input) works in Cubase, Studio One, Reaper, Bitwig, and most other hosts
 that support inter-track MIDI routing.
 
+### One track per channel: the MIDI out port (needs loopMIDI)
+
+The routing above hands the receiving track *every* note Go Sequencer plays.
+That is fine for one instrument, but in Live it cannot split the playheads
+apart by channel: **Ableton Live puts every note a plugin sends onto MIDI
+channel 1** when another track takes it with *MIDI From*, and that chooser has
+no channel filter anyway. Go Sequencer still sends the Black/White and Head
+channels correctly — Live throws them away on the way. A multitimbral
+instrument with one part per channel (SINE Player, Kontakt, …) then plays
+everything on its channel-1 part.
+
+Live *can* pick out a single channel when the MIDI comes from a **port**. So Go
+Sequencer can send its notes to a port as well, channels intact, and a virtual
+loopback port brings them straight back into Live.
+
+**Requirement — for this feature only:** a virtual MIDI loopback port. On
+Windows that is [**loopMIDI**](https://www.tobias-erichsen.de/software/loopmidi.html)
+by Tobias Erichsen (free). Nothing else in the plugin needs it: with **MIDI
+out port** on *Off* — the default — Go Sequencer opens no port at all.
+
+1. **Create the port.** Start loopMIDI, type a name (e.g. `GoSeq`) into
+   *New port-name* and click **+**. loopMIDI has to be running whenever the
+   port is used; set it to start with Windows from its tray icon.
+2. **Let Live see it.** In *Preferences → Link, Tempo & MIDI*, turn **Track**
+   on for the `GoSeq` **Input**. Leave the `GoSeq` **Output** off — Go
+   Sequencer is the only thing that should write to the port. If the port is
+   not listed, restart Live.
+3. **Point Go Sequencer at it.** On the **Channels** tab, set **MIDI out
+   port** to `GoSeq`. The line under it should read *also sending to GoSeq*.
+4. **Make one track per channel.** For each instrument or part, create a MIDI
+   track with **MIDI From** → `GoSeq` → **Ch. N** — the Head (or Black/White)
+   channel it should play — and **Monitor** → **In**. Either load the
+   instrument on that track, or set its **MIDI To** to the track holding a
+   multitimbral instrument and choose that part's channel in the chooser
+   under it.
+5. **Don't also route Go Sequencer's own track** into those tracks with
+   *MIDI From*: they would get every note twice.
+
+For example, Polyrhythm on a 9×9 with Heads 1–4 on channels 1–4, and SINE
+Player on its own track with four instruments on channels 1–4:
+
+| Track | MIDI From | Monitor | MIDI To |
+|---|---|---|---|
+| Go Sequencer | — | — | — |
+| Head 1 | `GoSeq` · Ch. 1 | In | SINE Player track · channel 1 |
+| Head 2 | `GoSeq` · Ch. 2 | In | SINE Player track · channel 2 |
+| Head 3 | `GoSeq` · Ch. 3 | In | SINE Player track · channel 3 |
+| Head 4 | `GoSeq` · Ch. 4 | In | SINE Player track · channel 4 |
+| SINE Player | — | — | Master |
+
+Worth knowing:
+
+- **Timing.** Notes go out through the port on their own high-resolution
+  clock, keeping the step spacing to within a millisecond. They come back into
+  Live as live input, though, so they can land a little later than a part
+  played inside Live — about one audio buffer. If a part drags against the
+  rest of the set, give its track a small negative **Track Delay**.
+- **Freeze and Export don't hear the port.** Live renders those offline,
+  faster than real time, and Go Sequencer only sends to the port while
+  playing in real time. Record each channel's track into clips first (arm the
+  tracks and record), then freeze or export as usual.
+- **Nothing is left hanging.** Stopping the transport ends every note on the
+  port as well, and switching **MIDI out port** to *Off* or to another port
+  first sends a note off for every note still sounding.
+- **The port is saved with the set**, by name. If it is not there when the set
+  opens — loopMIDI not started yet — the dropdown lists it as *(not there)* and
+  the line reads *waiting for GoSeq*. Go Sequencer listens for MIDI devices
+  coming and going and connects once the port appears; if it ever doesn't,
+  pick the port in the dropdown again.
+- **Other hosts** that keep channels on their own routing (Bitwig, Reaper) don't
+  need any of this — leave the port *Off* there.
+
 ## 11. Saving and recalling sessions
 
 Every control here is a JUCE `AudioProcessorValueTreeState` parameter, so
 your host's normal plugin-state saving covers all of it automatically: the
 board (which stones are placed), rate/note/gate, mode, all channel
-assignments, rule switches, which tab was left open,
+assignments, rule switches, which tab was left open, the **MIDI out port**
+(by name — see [§10](#one-track-per-channel-the-midi-out-port-needs-loopmidi)),
 and — separately — the loaded game record and its current scrub position.
 Saving your DAW project (or a plugin preset, if your host supports them)
 recalls the sequencer exactly as you left it, board included.
@@ -669,6 +755,11 @@ A session saved before there was a **Players** choice comes back with the
   macOS, or GCC/Clang on Linux
 - A [JUCE](https://github.com/juce-framework/JUCE) checkout — **not**
   vendored in this repo, you clone it yourself
+
+Using the built plugin needs nothing else — except
+[loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) on Windows,
+and only if you use the optional **MIDI out port** (see
+[§10](#one-track-per-channel-the-midi-out-port-needs-loopmidi)).
 
 ### Windows
 
@@ -764,6 +855,7 @@ GoSequencer/
 │   ├── PluginProcessor.*   # Audio/MIDI engine: playheads, clock, params, state
 │   ├── PluginEditor.*      # Plugin UI: all sliders/combos/buttons, board layout
 │   ├── BoardComponent.*    # The clickable Go board widget and its painting
+│   ├── MidiPortOut.*       # The optional MIDI out port: notes to a system port, channels intact
 │   ├── GoAI.h              # The self-play players, classic and reading (no JUCE deps, no floats)
 │   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE deps)
