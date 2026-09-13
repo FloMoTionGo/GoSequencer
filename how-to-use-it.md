@@ -232,8 +232,6 @@ clock — so the pattern keeps getting rewritten as the game plays.
    over it.
 2. Once loaded, the game's **title** and **detail** (players, result, etc.,
    as much as the SGF file provides) appear at the top of the tab.
-   A sample file is included at
-   [`sgf/89706031-145-Gruener123-FloMo.sgf`](sgf/89706031-145-Gruener123-FloMo.sgf).
 3. **Move rate** sets how fast recorded moves are played back, independent
    of the sequencer's own **Step rate**: `1/4, 1/2, 1 bar, 2 bars, 4 bars,
    8 bars`, or `one lap` (the move rate automatically matches however long

@@ -107,9 +107,6 @@ real game onto the board:
   so the pattern is continuously rewritten by the game as it plays.
 - **Run** / **Loop** start and repeat playback; **‹ ›** step one move at a
   time; **Unload** clears the record and leaves the board as it stood.
-- A sample game is included at
-  [`sgf/89706031-145-Gruener123-FloMo.sgf`](sgf/89706031-145-Gruener123-FloMo.sgf)
-  to try this with.
 - **Wave Replay** is a second pacing option: playback never pauses, but
   every **Wave Gap** moves after a move first landed, whatever's currently
   on that point gets its own lifespan reset — staggered per stone rather
