@@ -21,6 +21,7 @@ overview.
 - [Stone lifespan](#stone-lifespan)
 - [Controls](#controls)
 - [Loading a game record (SGF)](#loading-a-game-record-sgf)
+- [AI self-play](#ai-self-play)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
 - [Building it](#building-it)
   - [Requirements](#requirements)
@@ -31,7 +32,7 @@ overview.
 
 ## How it works
 
-The board is a real Go board — 9×9 or 13×13 — and clicking on it plays a
+The board is a real Go board — 9×9, 13×13 or 19×19 — and clicking on it plays a
 stone under real Go rules: captures, suicide, and the ko rule all apply (the
 last two can be switched off). Nothing about the *sound* depends on
 understanding Go, though; you can just click points and listen.
@@ -49,8 +50,8 @@ Set with the **Mode** control:
 | Mode | Playheads | Path |
 |---|---|---|
 | **Spiral** | 1 | Clockwise from the top-left corner, winding inward to *tengen* (centre). Black and white are routed on separate channels. |
-| **Quads out** / **Quads in** | 4 | One playhead per quadrant, each spiralling around that quadrant's star point (the 3-3 point on 9×9). The four blocks share the middle row/column, so all four heads meet in the centre at once. "Out" winds outward from the star point; "in" winds inward toward it. |
-| **Polyrhythm** | 4 (9×9) or 6 (13×13) | One playhead per concentric ring around the board (tengen itself isn't a ring). All heads share the same step clock, but the rings have different lengths — 32/24/16/8 points on a 9×9 — so they drift in and out of phase and only realign every 96 steps (480 on 13×13). Every ring has its own MIDI channel and its own pitch transpose, and they all sound together: the board plays as a chord, not a line. |
+| **Quads out** / **Quads in** | 4 | One playhead per quadrant, each spiralling around that quadrant's star point (the 3-3 point on 9×9, 4-4 on 13×13). On a 19×19 the blocks are 10×10 — an even side, with no single centre — so each spiral winds around the four points just inside the 4-4 star point instead. The four blocks share the middle row/column, so all four heads meet in the centre at once. "Out" winds outward from the middle of the block; "in" winds inward toward it. |
+| **Polyrhythm** | 4 (9×9), 6 (13×13) or 9 (19×19) | One playhead per concentric ring around the board (tengen itself isn't a ring). All heads share the same step clock, but the rings have different lengths — 32/24/16/8 points on a 9×9 — so they drift in and out of phase and only realign every 96 steps (480 on 13×13, 20,160 on 19×19). Every ring has its own MIDI channel and its own pitch transpose, and they all sound together: the board plays as a chord, not a line. |
 
 ## Stone lifespan
 
@@ -74,7 +75,7 @@ rather than resetting the whole board's clock.
 
 | Control | What it does |
 |---|---|
-| **Board** | 9×9 or 13×13. Changing it clears the board. |
+| **Board** | 9×9, 13×13 or 19×19. Changing it clears the board. |
 | **Mode** | Spiral / Polyrhythm / Quads out / Quads in — see above. |
 | **Place** | Alternate / Black / White — who a click plays next. |
 | **Rate** | Step clock rate, synced to host tempo (1/1 down to 1/32T). |
@@ -82,10 +83,13 @@ rather than resetting the whole board's clock.
 | **Note** | Base pitch; board position offsets from here. |
 | **Gate** | Note length as a percentage of one step. |
 | **Black/White Channel** | MIDI channel per colour (Spiral mode). |
-| **Head 1–6 Channel** | MIDI channel per playhead (multi-head modes). |
+| **Head 1–9 Channel** | MIDI channel per playhead (multi-head modes). |
 | **Black/White Velocity** | Fixed velocity per colour. |
 | **Spread** | Semitone transpose per ring (Polyrhythm). |
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
+| **AI Self-Play** | Two built-in players write the record instead of loading one — see below. |
+| **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
+| **From board** / **Use book** | Take the ten stones you played as the opening every game starts from, or go back to the built-in one. |
 | **Ko Rule** | Forbid immediately recapturing the previous position. |
 | **Self Capture** | Allow suicide moves (a group played with zero liberties is removed instead of refused). |
 
@@ -101,7 +105,7 @@ real game onto the board:
 - The moves play at their own speed (set by **Game Rate**: 1/4 note up to
   "one lap"), independent of the sequencer's step clock — both run at once,
   so the pattern is continuously rewritten by the game as it plays.
-- **Run** / **Loop** start and repeat playback; **◀ ▶** step one move at a
+- **Run** / **Loop** start and repeat playback; **‹ ›** step one move at a
   time; **Unload** clears the record and leaves the board as it stood.
 - A sample game is included at
   [`sgf/89706031-145-Gruener123-FloMo.sgf`](sgf/89706031-145-Gruener123-FloMo.sgf)
@@ -112,6 +116,76 @@ real game onto the board:
   than a synchronized pulse. With **Loop** on, the record wraps without
   clearing the board, so the wave keeps running until you stop. See
   [how-to-use-it.md](how-to-use-it.md#wave-replay) for the full mechanics.
+
+## AI self-play
+
+Turn on **AI self-play** and the plugin writes the record itself: two players
+take the board, game after game, with no file to load and nothing to connect
+to. It is the same machinery as an SGF underneath, so **Move Rate**, **Run**,
+**Loop**, the position slider and the step buttons all keep working exactly as
+they did.
+
+![Six self-play games, one opening](docs/mockups/self-play-games.png)
+
+Every game opens on the **same ten moves** and diverges from the eleventh. That
+is the point of it here: the sequencer reads position as pitch, so a fixed
+opening is a fixed motif, and the sixty moves after it are a variation on it
+that never repeats. Out of the box that opening is not invented either — it is
+the first ten moves of [`sgf/nine_dan_9x9_43610191.sgf`](sgf/) on a 9×9 and of
+[`sgf/Blackie_BIBA_13x13_25655059.sgf`](sgf/) on a 13×13. There's no 19×19
+record to take one from, so the full board opens on a textbook line instead:
+the four star points, then the commonest star-point joseki (low approach, small
+knight's move, two-space extension) in the upper left and again in the lower
+right.
+
+**Or play your own.** Clear the board, click out ten stones with **Place** on
+*Alternate*, and press **From board**: those ten become the opening of every
+game from then on. **Use book** puts the built-in one back. The opening is a
+sequence, not a position — the order decides what gets captured and what is
+legal — so it is the order you clicked in that is taken, not the shape left
+standing; lifting a stone takes it back out. Ten moves alternating from Black,
+legal from an empty board, or the button tells you which one is the problem.
+It is saved with the session, and it belongs to the board it was played on: a
+9×9 opening doesn't apply to a 13×13, which falls back to the book.
+
+![One run, three games](docs/mockups/self-play.gif)
+
+**The two players.** Black (*Kuro*) plays territorially — connects, extends,
+takes the third and fourth lines, fights when there is something to take. White
+(*Shiro*) fights — contact, cuts and ataris are worth more to it than shape is.
+They are heuristics, not a search or a net: every legal point is scored on
+captures, saving its own stones from atari, cutting, connecting, staying near
+the last move and keeping off the first line, and one of the best twelve is
+drawn. A default 60-move game takes about a millisecond to write on a 9×9 and
+around 6 ms on a 19×19, on the message thread, one game ahead of the one
+playing — so the swap at the end of a game costs the audio thread nothing.
+
+**The three settings.**
+
+- **Game Length** — 12 to 160 moves. The ten book moves are part of it.
+- **Variation** — 0% plays the best point it can see every time, so the run is
+  one game repeating. 100% picks freely among the best twelve. The default 35%
+  keeps the play recognisable and the games different.
+- **Seed** — names the run. The same seed plays the same games in the same
+  order, on any machine, and a saved session comes back on the game it was
+  left on (it is regenerated, not stored).
+
+All three are read when a game is *written*, so changing one lands on the next
+game rather than cutting the current one short. To restart a run immediately,
+switch AI self-play off and on.
+
+Loading an .sgf or pressing **Unload** hands the board back and switches
+self-play off. **Wave Replay** holds a run on one game while it is on — the
+wave is rippling stones the next game would not have played.
+
+**Exporting the games.** `GoAiDump` plays the same two players outside the
+plugin and writes ordinary `.sgf` files, which load straight back into it (or
+into any Go viewer):
+
+```powershell
+cmake --build build --config Release --target GoAiDump
+.\build\Release\GoAiDump.exe --games 6 --seed 1 --out sgf\selfplay
+```
 
 ## Using it in Ableton Live
 
@@ -210,8 +284,11 @@ GoSequencer/
 │   ├── PluginEditor.*      # Plugin UI (sliders, combo boxes, board view)
 │   ├── BoardComponent.*    # The clickable Go board widget
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE)
+│   ├── GoAI.h              # The two self-play players (no JUCE, no floats)
 │   └── SgfParser.h         # Minimal SGF (game record) reader
-├── sgf/                    # Sample game record for trying SGF playback
+├── sgf/                    # Sample game records for trying SGF playback
+├── tools/
+│   └── GoAiDump.cpp        # Plays the two players outside the plugin, writes .sgf
 └── tests/
-    └── GoRulesTests.cpp    # Rules-engine unit test, run via ctest
+    └── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
 ```

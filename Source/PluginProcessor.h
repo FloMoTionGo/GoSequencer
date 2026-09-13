@@ -4,8 +4,10 @@
 
 #include <array>
 #include <atomic>
+#include <iterator>
 #include <vector>
 
+#include "GoAI.h"
 #include "GoBoard.h"
 #include "SgfParser.h"
 
@@ -17,16 +19,18 @@
                   in to tengen. Black and white have a channel each, so the
                   colour it passed can be routed as well as heard.
 
-      Quads       one playhead per quadrant, each spiralling around that
-                  quadrant's star point - the san-san point on a 9x9. The four
+      Quads       one playhead per quadrant, each spiralling around the middle
+                  of its block - the corner star point on a 9x9 and a 13x13,
+                  the four points inside the 4-4 star on a 19x19. The four
                   blocks share the middle row and column, so the heads meet on
-                  the same edge in the centre. They can wind out from the star
-                  point or in to it.
+                  the same edge in the centre. They can wind out from the
+                  middle or in to it.
 
       Polyrhythm  one playhead per concentric ring, tengen aside: four of them
-                  on a 9x9, six on a 13x13. They share the step clock, but the
-                  rings are 32, 24, 16 and 8 points around, so they come back
-                  into phase only every 96 steps (480 on a 13x13). Every ring
+                  on a 9x9, six on a 13x13, nine on a 19x19. They share the step
+                  clock, but the rings are 32, 24, 16 and 8 points around, so
+                  they come back into phase only every 96 steps (480 on a
+                  13x13, 20160 on a 19x19). Every ring
                   has its own channel and its own transpose, and they all sound
                   together, so the board plays as a chord rather than a line.
 
@@ -47,8 +51,8 @@
 
     Channels are set one at a time and never derived from one another: spiral
     has a channel for black and one for white, and the multi head modes have one
-    per playhead - four on a 9x9, six rings on a 13x13. They start out on 1..6,
-    but nothing stops two heads sharing a channel or the whole board sitting on
+    per playhead - four on a 9x9, six rings on a 13x13, nine on a 19x19. They
+    start out on 1..9, but nothing stops two heads sharing a channel or the whole board sitting on
     one. The editor keeps them folded away, since a set that never leaves channel
     1 has no reason to look at them.
 
@@ -121,11 +125,12 @@ public:
     int  stepCount()      const noexcept { const int s = boardSize(); return s * s; }
     int  spiralAt (int step) const noexcept;
 
-    //  Rings. ringCount() is 4 on a 9x9 and 6 on a 13x13: tengen is left out.
+    //  Rings. ringCount() is 4 on a 9x9, 6 on a 13x13 and 9 on a 19x19: tengen
+    //  is left out.
     bool isPolyrhythm()   const noexcept;
     int  ringCount()      const noexcept { return go::ringCount (boardSize()); }
 
-    //  Quadrants: four spirals around the corner star points.
+    //  Quadrants: four spirals, one per corner block.
     bool isQuads()        const noexcept;
     bool quadsWindOut()   const noexcept;
 
@@ -188,6 +193,65 @@ public:
     void nudgeGamePosition (int delta) { setGamePosition (gamePosition() + delta); }
 
     //==============================================================================
+    //  AI self-play: the record is written rather than loaded.
+    //
+    //  The two players in GoAI.h play a game out, and what comes back is an
+    //  ordinary record - so Move Rate, Run, Loop, the step buttons, the position
+    //  slider and Wave Replay all go on meaning exactly what they meant for an
+    //  .sgf, and none of them had to learn about this.
+    //
+    //  Every game opens on the same ten book moves and diverges from the first
+    //  move after: the sequencer reads position as pitch, so that is a fixed
+    //  motif followed by a variation on it, once per game.
+    //
+    //  Threading. Generating a game allocates, so it only ever happens on the
+    //  message thread, one game ahead of the one being played. When the record
+    //  runs out under Loop, the audio thread swaps the waiting game in - a
+    //  member-wise swap of two records, which is a handful of pointer exchanges
+    //  and no heap traffic (goai::swapGames) - and asks the message thread for
+    //  the next one. If that request has not been answered by the time the game
+    //  ends, nothing breaks: the record simply repeats, as it would have before.
+    //
+    //  Length, Variation and Seed are read when a game is generated, so a change
+    //  to any of them lands on the next game rather than interrupting this one.
+    //  Switching AI Self-Play off and on starts a fresh run from game 1.
+
+    bool aiSelfPlay()   const noexcept { return aiActive.load (std::memory_order_relaxed); }
+
+    //==============================================================================
+    //  The opening. Ten moves, black first, and the same ten at the start of
+    //  every game of a run - either the book line in GoAI.h or one played by
+    //  hand on the board.
+    //
+    //  A position is not an opening: the order the stones went down in decides
+    //  what is captured and what is legal, and the board does not remember it.
+    //  So the stones a click places are recorded as they are played (handPlayed)
+    //  and it is that sequence, not the board, which an opening is taken from.
+
+    static constexpr int openingLength = goai::openingLength;
+
+    /** Takes the first ten stones played by hand since the board was last
+        cleared as the opening. Returns an empty string, or a sentence saying
+        why those ten will not do. */
+    juce::String setOpeningFromBoard();
+
+    /** Back to the book line for this board size. */
+    void useBookOpening();
+
+    bool hasCustomOpening() const noexcept { return customOpeningCount == openingLength; }
+
+    /** "your ten moves" or "the book line", for the editor to show. */
+    juce::String openingDescription() const;
+
+    /** How many hand-played stones an opening could be taken from right now. */
+    int handPlayedCount() const noexcept { return (int) handPlayed.size(); }
+
+    /** Which game of the run is playing, counted from 1, and the seed it was
+        generated from - the pair that names it exactly. */
+    int  aiGameNumber() const noexcept { return aiGameCounter.load (std::memory_order_relaxed) + 1; }
+    unsigned int aiSeed() const noexcept { return aiSeedShown.load (std::memory_order_relaxed); }
+
+    //==============================================================================
     //  Wave Replay: an alternative pacing for game record playback. Advance
     //  never pauses - every move still lands on its own Move Rate tick - but
     //  every waveGap moves after a move first landed, whatever currently sits
@@ -240,6 +304,10 @@ private:
 
     void publishBoard();
     void applyBoardSize (int newSize);
+
+    /** The size the board size parameter asks for. Its choices are listed in
+        go::supportedSizes order, so the choice index is the size slot. */
+    int chosenBoardSize() const noexcept;
     /** Sends one note for the stone on idx, if there is one and it is still
         inside its lifespan. Every mode goes through here, so the lifespan gate,
         the gate length, retrigger safety and the note off queue are shared. */
@@ -288,6 +356,34 @@ private:
         point still echoing an earlier move - see the class doc above. */
     void applyWaveEchoesLocked (int movesPlaced);
 
+    //  ---- AI self-play, message thread unless noted ------------------------
+    /** The settings a game is generated from: the three parameters, plus the
+        seed that game number turns into. */
+    goai::Settings aiSettingsFor (int size, int gameNumber) const;
+
+    /** Starts a run at this game number: generates it, puts it on the board,
+        and asks for the one after it. */
+    void startAiSelfPlay (int gameNumber);
+
+    /** The switch going off: the run ends and its record is unloaded. Does
+        nothing if the record on the board is not one of ours. */
+    void stopAiSelfPlay();
+
+    /** Hands the board back to whatever is taking over - a loaded .sgf, an
+        unload - without clearing the record that replaced ours. Turns the
+        parameter off too, so the switch tells the truth. */
+    void releaseAiSelfPlay();
+
+    /** Generates the game after the one playing, into aiNextGame. */
+    void prepareNextAiGame();
+
+    /** Audio thread: puts the waiting game on the board. Expects boardLock, and
+        must not allocate - see the note above. */
+    void swapInNextAiGameLocked();
+
+    /** Drops the record, leaving the board as it stands. Expects boardLock. */
+    void clearGameLocked();
+
     /** Keeps Stone Life below Wave Gap while Wave Replay is on, so a reset
         is always something a stone would otherwise have missed. Message
         thread only (routed there via handleAsyncUpdate, since the parameter
@@ -300,6 +396,24 @@ private:
     sgf::Game game;
     juce::String sgfText, sourceName;
     int gameMovePosition = 0;                      // guarded by boardLock
+
+    //  Stones placed by hand, in the order they were played: where a custom
+    //  opening comes from. Message thread only, and dropped whenever something
+    //  other than a click puts stones on the board.
+    std::vector<sgf::Placement> handPlayed;
+
+    //  the opening every game of a run starts from, or count 0 for the book.
+    //  Kept as board indices, so it belongs to the size it was played on.
+    std::array<int, (size_t) goai::openingLength> customOpening {};
+    int customOpeningCount = 0;
+    int customOpeningSize = 0;
+
+    //  the game after the one playing, generated in advance so the swap at the
+    //  end of a game costs the audio thread nothing
+    sgf::Game aiNextGame;                          // guarded by boardLock
+    bool aiNextReady = false;                      // guarded by boardLock
+    int aiNextNumber = 0;                          // guarded by boardLock
+    unsigned int aiNextSeed = 0;                   // guarded by boardLock
     //  set once the record has wrapped at least once under Wave Replay, so echo
     //  sources may reach back past move 1 into the tail of the record - before
     //  that there is no earlier pass for them to find. Cleared by any rebuild.
@@ -313,13 +427,14 @@ private:
     std::atomic<bool> running { false };
     std::atomic<int> nextAlternating { (int) go::Stone::black };
 
-    std::array<int, go::maxCells> spiral9 {}, spiral13 {};
-    std::array<std::array<int, go::maxCells>, go::quadCount> quad9 {}, quad13 {};
+    //  the walks, worked out once per board size and indexed by go::sizeSlot()
+    std::array<std::array<int, go::maxCells>, go::sizeCount> spiralTables {};
+    std::array<std::array<std::array<int, go::maxCells>, go::quadCount>, go::sizeCount> quadTables {};
 
     //  room for every ring to hold a note at once, with headroom for the
     //  overlap when a long gate runs into the next step
     std::array<PendingNoteOff, 32> pending {};
-    //  maxRings is the widest any mode gets: 6 rings beats 4 quadrants
+    //  maxRings is the widest any mode gets: 9 rings beats 4 quadrants
     std::array<std::atomic<int>, go::maxRings> headPos {};
 
     //  Two ways of ageing a stone, both a difference between "then" and "now":
@@ -367,12 +482,28 @@ private:
     juce::AudioParameterBool*   waveReplayParam  = nullptr;
     juce::AudioParameterInt*    waveGapParam     = nullptr;
 
+    juce::AudioParameterBool*   aiPlayParam      = nullptr;
+    juce::AudioParameterInt*    aiMovesParam     = nullptr;
+    juce::AudioParameterInt*    aiVariationParam = nullptr;
+    juce::AudioParameterInt*    aiSeedParam      = nullptr;
+
     //  re-entrancy guard: clampStoneLifeToWaveGap() sets stoneLifeParam,
     //  which would otherwise trigger parameterChanged() straight back into it
     bool clampingWaveParams = false;
 
+    //  the same, for releaseAiSelfPlay() writing aiPlayParam
+    bool settingAiPlayParam = false;
+
+    //  true while the record on the board is one the players wrote, which is
+    //  what tells the audio thread it may swap the next game in at the wrap
+    std::atomic<bool> aiActive { false };
+    std::atomic<int>  aiGameCounter { 0 };
+    std::atomic<unsigned int> aiSeedShown { 0 };
+
     std::atomic<bool> pendingBoardSizeChange { false };
     std::atomic<bool> pendingWaveClamp       { false };
+    std::atomic<bool> pendingAiRestart       { false };
+    std::atomic<bool> pendingAiPrepare       { false };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerProcessor)
 };
