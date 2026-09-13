@@ -18,6 +18,10 @@ class GoLookAndFeel final : public juce::LookAndFeel_V4
 public:
     GoLookAndFeel();
 
+    /** Re-reads every theme:: colour. Called once at construction and again
+        whenever the editor flips between the light and dark schemes. */
+    void applyColours();
+
     void drawButtonBackground (juce::Graphics&, juce::Button&, const juce::Colour& backgroundColour,
                                bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown) override;
     juce::Font getTextButtonFont (juce::TextButton&, int buttonHeight) override;
@@ -88,6 +92,9 @@ private:
     void showMessage (const juce::String&);
     void refreshGameDisplay();
 
+    /** The always-visible light/dark switch, top right of the header. */
+    void setDarkMode (bool dark);
+
     GoSequencerProcessor& processor;
     GoLookAndFeel lookAndFeel;
     BoardComponent board;
@@ -95,6 +102,13 @@ private:
     std::array<juce::TextButton, (size_t) tabCount> tabButtons;
     std::array<std::vector<juce::Component*>, (size_t) tabCount> tabMembers;
     int currentTab = sequencerTab;
+
+    //  always visible, whichever tab is open - not itself a tab member
+    juce::TextButton darkModeButton;
+
+    //  captions and text labels coloured theme::dimText at setup time; the
+    //  colour is a copy, so a scheme change has to walk this list and re-set it
+    std::vector<juce::Label*> dimLabels;
 
     juce::ComboBox rateBox, colourBox, sizeBox, gameRateBox, modeBox, lifeModeBox;
     juce::Slider noteSlider, gateSlider, tempoSlider,

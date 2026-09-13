@@ -10,15 +10,52 @@
     is on, the playhead, the path it walks - never on decoration. */
 namespace theme
 {
-    inline const juce::Colour background { 0xfffbfbfa };   //  the panel
-    inline const juce::Colour boardFill  { 0xfff2f2f0 };   //  the board, one step down from the panel
-    inline const juce::Colour ink        { 0xff1c1c1e };   //  text, black stones, filled tracks
-    inline const juce::Colour dimText    { 0xff7a7a7d };   //  captions, the status line
-    inline const juce::Colour faintText  { 0xffa5a5a8 };   //  closed tabs, coordinates, disabled
-    inline const juce::Colour hairline   { 0xffd8d8da };   //  dropdown rules, switch outlines, empty tracks
-    inline const juce::Colour gridLine   { 0xffbdbdbb };
-    inline const juce::Colour accent     { 0xffc85a3c };
-    inline const juce::Colour error      { 0xffd6412f };   //  a refused move
+    //  two schemes, creamy paper or charcoal, never plain white or plain black
+    inline bool isDark = false;
+
+    inline juce::Colour background { 0xfffaf6ee };   //  the panel
+    inline juce::Colour boardFill  { 0xfff1e9d8 };   //  the board, one step down from the panel
+    inline juce::Colour ink        { 0xff2b2924 };   //  text, black stones, filled tracks
+    inline juce::Colour dimText    { 0xff726b5c };   //  captions, the status line
+    inline juce::Colour faintText  { 0xffa79d89 };   //  closed tabs, coordinates, disabled
+    inline juce::Colour hairline   { 0xffddd3bd };   //  dropdown rules, switch outlines, empty tracks
+    inline juce::Colour gridLine   { 0xffc2b59c };
+    inline juce::Colour accent     { 0xffc85a3c };
+    inline juce::Colour error      { 0xffd6412f };   //  a refused move
+
+    /** Flips every colour between the light (creamy white) and dark (charcoal)
+        schemes. Values are copied wherever they are used, so anything already
+        drawn or coloured has to be told again - see GoLookAndFeel::applyColours
+        and GoSequencerEditor::setDarkMode. */
+    inline void setDark (bool dark)
+    {
+        isDark = dark;
+
+        if (dark)
+        {
+            background = juce::Colour (0xff2a2822);
+            boardFill  = juce::Colour (0xff34302a);
+            ink        = juce::Colour (0xfff2ecdd);
+            dimText    = juce::Colour (0xffada387);
+            faintText  = juce::Colour (0xff756e5c);
+            hairline   = juce::Colour (0xff4a4438);
+            gridLine   = juce::Colour (0xff5c5544);
+            accent     = juce::Colour (0xffe0754f);
+            error      = juce::Colour (0xffe8604a);
+        }
+        else
+        {
+            background = juce::Colour (0xfffaf6ee);
+            boardFill  = juce::Colour (0xfff1e9d8);
+            ink        = juce::Colour (0xff2b2924);
+            dimText    = juce::Colour (0xff726b5c);
+            faintText  = juce::Colour (0xffa79d89);
+            hairline   = juce::Colour (0xffddd3bd);
+            gridLine   = juce::Colour (0xffc2b59c);
+            accent     = juce::Colour (0xffc85a3c);
+            error      = juce::Colour (0xffd6412f);
+        }
+    }
 
     /** Segoe UI on Windows; elsewhere the platform's own sans, which is already
         the right kind of plain. Tracking is a proportion of the height. */

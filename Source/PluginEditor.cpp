@@ -21,6 +21,9 @@ namespace
     //  the open tab rides along in the state, so a session comes back on it
     const juce::Identifier activeTabProperty { "activeTab" };
 
+    //  so does the light/dark choice
+    const juce::Identifier darkModeProperty { "darkMode" };
+
     juce::Font captionFont() { return theme::font (11.0f, juce::Font::plain, 0.06f); }
     juce::Font valueFont()   { return theme::font (12.5f); }
     juce::Font pillFont()    { return theme::font (11.0f, juce::Font::plain, 0.05f); }
@@ -96,7 +99,11 @@ namespace
 GoLookAndFeel::GoLookAndFeel()
 {
     setColourScheme (juce::LookAndFeel_V4::getLightColourScheme());
+    applyColours();
+}
 
+void GoLookAndFeel::applyColours()
+{
     setColour (juce::ResizableWindow::backgroundColourId,     theme::background);
     setColour (juce::Label::textColourId,                     theme::ink);
 
@@ -305,7 +312,18 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
 {
     setLookAndFeel (&lookAndFeel);
 
+    //  the scheme has to be right before anything below reads a theme:: colour
+    theme::setDark (processor.apvts.state.getProperty (darkModeProperty, false));
+    lookAndFeel.applyColours();
+
     lastSgfDirectory = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
+
+    darkModeButton.setButtonText ("Dark");
+    darkModeButton.setClickingTogglesState (true);
+    darkModeButton.setToggleState (theme::isDark, juce::dontSendNotification);
+    darkModeButton.setTitle ("switch between light and dark");
+    darkModeButton.onClick = [this] { setDarkMode (darkModeButton.getToggleState()); };
+    addAndMakeVisible (darkModeButton);
 
     addAndMakeVisible (board);
     board.onMessage = [this] (const juce::String& text) { showMessage (text); };
@@ -521,6 +539,26 @@ void GoSequencerEditor::showTab (int tab)
     processor.apvts.state.setProperty (activeTabProperty, currentTab, nullptr);
 }
 
+void GoSequencerEditor::setDarkMode (bool dark)
+{
+    theme::setDark (dark);
+    lookAndFeel.applyColours();
+
+    for (auto* label : dimLabels)
+        label->setColour (juce::Label::textColourId, theme::dimText);
+
+    //  these colour themselves ink or dimText depending on state, not always
+    //  dimText, so they need re-reading rather than the flat reset above
+    refreshOpeningDisplay();
+    refreshGameDisplay();
+
+    processor.apvts.state.setProperty (darkModeProperty, dark, nullptr);
+
+    sendLookAndFeelChange();
+    board.repaint();
+    repaint();
+}
+
 void GoSequencerEditor::setUpCaption (Tab tab, juce::Label& caption, const juce::String& text)
 {
     caption.setText (text.toUpperCase(), juce::dontSendNotification);
@@ -529,6 +567,7 @@ void GoSequencerEditor::setUpCaption (Tab tab, juce::Label& caption, const juce:
     caption.setBorderSize ({ 0, 0, 0, 0 });
     caption.setJustificationType (juce::Justification::centredLeft);
     addToTab (tab, caption);
+    dimLabels.push_back (&caption);
 }
 
 void GoSequencerEditor::setUpText (Tab tab, juce::Label& label, juce::Justification justification)
@@ -538,6 +577,7 @@ void GoSequencerEditor::setUpText (Tab tab, juce::Label& label, juce::Justificat
     label.setBorderSize ({ 0, 0, 0, 0 });
     label.setJustificationType (justification);
     addToTab (tab, label);
+    dimLabels.push_back (&label);
 }
 
 void GoSequencerEditor::setUpSlider (Tab tab, juce::Slider& slider, juce::Label& caption,
@@ -733,6 +773,12 @@ void GoSequencerEditor::resized()
 
     headerBounds = column.removeFromTop (titleHeight + statusHeight);
     column.removeFromTop (headerGap);
+
+    {
+        //  top right of the title line, whichever tab is open
+        auto titleLine = headerBounds.withHeight (titleHeight);
+        darkModeButton.setBounds (titleLine.removeFromRight (pillWidth (darkModeButton)).reduced (0, 2));
+    }
 
     {
         auto strip = column.removeFromTop (tabHeight);
