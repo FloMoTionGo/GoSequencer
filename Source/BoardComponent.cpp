@@ -337,22 +337,18 @@ void BoardComponent::paintPath (juce::Graphics& g)
 void BoardComponent::drawStone (juce::Graphics& g, juce::Point<float> centre, float radius,
                                 bool black, float alpha)
 {
-    //  flat discs: black is the ink, white is the panel with an edge drawn round it
+    //  flat discs in fixed colours. An edge goes round whichever stone is close
+    //  to the ground it sits on: white on the light scheme, black on the dark one.
     const auto bounds = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (centre);
-
-    if (black)
-    {
-        g.setColour (theme::ink.withMultipliedAlpha (alpha));
-        g.fillEllipse (bounds);
-        return;
-    }
-
     const float edge = juce::jmax (1.0f, radius * 0.08f);
 
-    g.setColour (theme::background.withMultipliedAlpha (alpha));
+    g.setColour ((black ? theme::stoneBlack : theme::stoneWhite).withMultipliedAlpha (alpha));
     g.fillEllipse (bounds);
 
-    g.setColour (theme::faintText.withMultipliedAlpha (alpha));
+    if (black && ! theme::isDark)
+        return;
+
+    g.setColour ((black ? theme::dimText : theme::faintText).withMultipliedAlpha (alpha));
     g.drawEllipse (bounds.reduced (edge * 0.5f), edge);
 }
 
@@ -381,7 +377,7 @@ void BoardComponent::paintStones (juce::Graphics& g)
     if (lastMove >= 0 && lastMove < cells && processor.stoneAt (lastMove) != go::Stone::none)
     {
         const bool black = processor.stoneAt (lastMove) == go::Stone::black;
-        g.setColour (black ? theme::background : theme::ink);
+        g.setColour (black ? theme::stoneWhite : theme::stoneBlack);
         g.drawEllipse (juce::Rectangle<float> (radius * 0.7f, radius * 0.7f).withCentre (pointFor (lastMove)), 1.4f);
     }
 }

@@ -15,13 +15,19 @@ namespace theme
 
     inline juce::Colour background { 0xfffaf6ee };   //  the panel
     inline juce::Colour boardFill  { 0xfff1e9d8 };   //  the board, one step down from the panel
-    inline juce::Colour ink        { 0xff2b2924 };   //  text, black stones, filled tracks
+    inline juce::Colour ink        { 0xff2b2924 };   //  text, filled tracks
     inline juce::Colour dimText    { 0xff726b5c };   //  captions, the status line
     inline juce::Colour faintText  { 0xffa79d89 };   //  closed tabs, coordinates, disabled
     inline juce::Colour hairline   { 0xffddd3bd };   //  dropdown rules, switch outlines, empty tracks
     inline juce::Colour gridLine   { 0xffc2b59c };
     inline juce::Colour accent     { 0xffc85a3c };
     inline juce::Colour error      { 0xffd6412f };   //  a refused move
+
+    //  the stones keep their colour in both schemes: black is always the dark
+    //  one, white the light one, whatever the panel behind them does. Black
+    //  sits below the charcoal panel so it still reads as a filled disc there.
+    inline const juce::Colour stoneBlack { 0xff171512 };
+    inline const juce::Colour stoneWhite { 0xfffaf6ee };
 
     /** Flips every colour between the light (creamy white) and dark (charcoal)
         schemes. Values are copied wherever they are used, so anything already
