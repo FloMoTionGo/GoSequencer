@@ -26,6 +26,7 @@ overview.
 - [How it works](#how-it-works)
 - [Playhead modes](#playhead-modes)
 - [Stone lifespan](#stone-lifespan)
+- [Instruments and drum kits](#instruments-and-drum-kits)
 - [Controls](#controls)
 - [Loading a game record (SGF)](#loading-a-game-record-sgf)
 - [AI self-play](#ai-self-play)
@@ -47,10 +48,12 @@ last two can be switched off). Nothing about the *sound* depends on
 understanding Go, though; you can just click points and listen.
 
 One or more **playheads** step around the board on the sequencer's clock.
-Whenever a playhead lands on a point holding a stone, that stone fires a MIDI
-note — its column and row pick the pitch region, its colour (black/white) or
-its playhead picks the MIDI channel, and how long it's been on the board
-decides whether it's still allowed to sound at all.
+Whenever a playhead lands on a point holding a stone, that stone fires MIDI
+notes: its colour (black/white) or its playhead picks the MIDI channel, the
+**instrument** on that channel decides what it plays — one fixed pitch, a step
+of a scale read from the line the stone sits on, a chord, or one of up to nine
+drum pads — and how long it's been on the board decides whether it's still
+allowed to sound at all.
 
 ## Playhead modes
 
@@ -80,6 +83,41 @@ Changing the lifespan slider while the sequencer runs re-evaluates every
 stone against the age it's already reached (some go silent, some come back)
 rather than resetting the whole board's clock.
 
+## Instruments and drum kits
+
+Every channel slot — **Black** and **White** in Spiral, **Head 1–9** in the
+multi-head modes — plays its own instrument, set on the **Instruments** tab:
+
+| Instrument | What a stone plays |
+|---|---|
+| **Note** (default) | The **Note**, plus the head's **Spread**: every stone the same pitch. This is how Go Sequencer always sounded, so older sessions come back unchanged. |
+| **Melody** | A step of the **Scale**, read from the line the stone sits on: the middle line plays the Note, each line up one step higher, each line down one lower. |
+| **Bass** | The melody's step two octaves down, folded into one octave so it stays in the bass register. |
+| **Chord** | The melody's note with the scale's third and fifth above it — three notes per stone, always in key. |
+| **Drums** | One of the slot's drum kit pads. |
+
+**The drum kit.** Each slot has its own kit of up to **nine pads**, and every
+pad is a MIDI note. Out of the box they follow the General MIDI drum map (kick,
+snare, closed hat, open hat, clap, low tom, high tom, rim, crash), so they line
+up with a Drum Rack or any GM kit. **Kit pads** sets how many of the nine a
+slot uses. Which pad a stone hits depends on its lane on the board, set with
+**Drum lanes**:
+
+- **Rows** — line 1 (the bottom line) plays pad 1, the line above it pad 2, and so on.
+- **Columns** — column A plays pad 1, moving right.
+- **Rings** — the edge plays pad 1, each ring further in the next pad.
+
+When the board has more lanes than the kit has pads, the lanes share the pads
+out in even bands (a 19×19's nineteen rows over nine pads: about two rows a
+pad). When it has fewer, the extra pads rest. A drum is struck, not held: two
+stones of the same colour in a row are two hits, where a pitched instrument
+would tie them into one long note. **Spread** transposes the pitched
+instruments only; a drum pad always plays the note it is set to.
+
+**Scale** (Major, Minor, Dorian, Pentatonic, Minor pentatonic, Hirajoshi, Yo or
+Chromatic; Minor pentatonic by default) and **Drum lanes** are shared by every
+slot.
+
 ## Controls
 
 | Control | What it does |
@@ -89,13 +127,17 @@ rather than resetting the whole board's clock.
 | **Place** | Alternate / Black / White — who a click plays next. |
 | **Rate** | Step clock rate, synced to host tempo (1/1 down to 1/32T). |
 | **Free Run** + **Free Tempo** | Run the step clock at its own BPM instead of following the host transport. |
-| **Note** | Base pitch; board position offsets from here. |
+| **Note** | Base pitch: what a *Note* slot plays, and the root *Melody*, *Bass* and *Chord* climb the scale from. |
 | **Gate** | Note length as a percentage of one step. |
 | **Black/White Channel** | MIDI channel per colour (Spiral mode). |
 | **Head 1–9 Channel** | MIDI channel per playhead (multi-head modes). |
 | **MIDI out port** | Also sends every note to a MIDI port of your system, channels intact, so each channel can go to its own track in Live. *Off* by default; needs [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) on Windows — see [below](#one-track-per-channel-the-midi-out-port-needs-loopmidi). |
 | **Black/White Velocity** | Fixed velocity per colour. |
-| **Spread** | Semitone transpose per ring (Polyrhythm). |
+| **Spread** | Semitone transpose per playhead (multi-head modes); drum kits ignore it. |
+| **Instrument** | Per channel slot: Note / Melody / Bass / Chord / Drums — see [Instruments and drum kits](#instruments-and-drum-kits). |
+| **Scale** | The scale Melody, Bass and Chord read the board in. |
+| **Drum lanes** | Rows / Columns / Rings — which lanes of the board pick a drum pad. |
+| **Kit pads** / **Pad 1–9** | How many pads a slot's kit uses, and the MIDI note of each. |
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
 | **AI Self-Play** | Two built-in players write the record instead of loading one — see below. |
 | **Players** | *Reading* (the default) or *Classic* — which generation of the two players writes the games. |
@@ -136,9 +178,10 @@ they did.
 ![Six self-play games, one opening](docs/mockups/self-play-games.png)
 
 Every game opens on the **same ten moves** and diverges from the eleventh. That
-is the point of it here: the sequencer reads position as pitch, so a fixed
-opening is a fixed motif, and the sixty moves after it are a variation on it
-that never repeats. Out of the box that opening is not invented either — it is
+is the point of it here: the sequencer turns position into rhythm — and, on a
+Melody, Bass, Chord or Drums slot, into pitch or drum too — so a fixed opening
+is a fixed motif, and the sixty moves after it are a variation on it that never
+repeats. Out of the box that opening is not invented either — it is
 the first ten moves of [`sgf/nine_dan_9x9_43610191.sgf`](sgf/) on a 9×9 and of
 [`sgf/Blackie_BIBA_13x13_25655059.sgf`](sgf/) on a 13×13. There's no 19×19
 record to take one from, so the full board opens on a textbook line instead:
@@ -384,7 +427,9 @@ it to `~/Library/Audio/Plug-Ins/VST3/`.
 
 The Go rules (captures, suicide, ko, scoring) live in a header
 ([`Source/GoBoard.h`](Source/GoBoard.h)) that's plain C++ with no JUCE
-dependency, so it can be unit-tested without loading a plugin host.
+dependency, so it can be unit-tested without loading a plugin host. So is what
+a stone plays — instruments, scales and drum pads, in
+[`Source/Instruments.h`](Source/Instruments.h) — which `InstrumentTests` checks.
 
 ```powershell
 cmake --build build --target GoRulesTests --config Release
@@ -401,6 +446,7 @@ GoSequencer/
 │   ├── PluginEditor.*      # Plugin UI (sliders, combo boxes, board view)
 │   ├── BoardComponent.*    # The clickable Go board widget
 │   ├── MidiPortOut.*       # The optional MIDI out port: notes to a system port, channels intact
+│   ├── Instruments.h       # What a stone plays: instruments, scales, drum kits (no JUCE)
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE)
 │   ├── GoAI.h              # The self-play players, classic and reading (no JUCE, no floats)
 │   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas
@@ -409,5 +455,6 @@ GoSequencer/
 ├── tools/
 │   └── GoAiDump.cpp        # Plays the two players outside the plugin, writes .sgf
 └── tests/
-    └── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
+    ├── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
+    └── InstrumentTests.cpp # Scales, drum lanes and the notes a stone sends, run via ctest
 ```

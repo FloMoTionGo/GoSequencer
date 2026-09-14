@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(GoSequencer VERSION 1.0.0 LANGUAGES C CXX)
+project(GoSequencer VERSION 1.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -76,6 +76,13 @@ target_compile_features(GoRulesTests PRIVATE cxx_std_17)
 # The example record is replayed through the rules engine as part of the test.
 add_test(NAME go_rules
          COMMAND GoRulesTests "${CMAKE_CURRENT_SOURCE_DIR}/sgf/89706031-145-Gruener123-FloMo.sgf")
+
+# What a stone sounds like - instruments, scales and drum pads - is plain C++ too.
+add_executable(InstrumentTests tests/InstrumentTests.cpp)
+target_include_directories(InstrumentTests PRIVATE Source)
+target_compile_features(InstrumentTests PRIVATE cxx_std_17)
+
+add_test(NAME instruments COMMAND InstrumentTests)
 
 #==============================================================================
 # The two self-play players, outside the plugin: writes the games they play as

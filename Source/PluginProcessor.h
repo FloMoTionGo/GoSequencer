@@ -9,6 +9,7 @@
 
 #include "GoAI.h"
 #include "GoBoard.h"
+#include "Instruments.h"
 #include "MidiPortOut.h"
 #include "SgfParser.h"
 
@@ -56,6 +57,12 @@
     start out on 1..9, but nothing stops two heads sharing a channel or the whole board sitting on
     one. The editor keeps them folded away, since a set that never leaves channel
     1 has no reason to look at them.
+
+    What a channel slot plays is its own as well. Black, white and each head
+    has an instrument: Note, the single pitch every stone always played;
+    Melody, Bass and Chord, which read the line a stone sits on as a step of
+    the scale; or Drums, a kit of up to nine pads that a lane of the board picks
+    from. The mapping itself is plain C++ in Instruments.h.
 
     A game record can be loaded on top of that: the moves of a real game are
     then played onto the board at their own speed while the spiral keeps
@@ -297,6 +304,32 @@ public:
 
     bool midiOutPortOpen() const noexcept { return portOut.isOpen(); }
 
+    //==============================================================================
+    //  Instruments. A voice is a channel slot - inst::black, inst::white, then
+    //  inst::firstHead + h for head h - and it owns a channel, an instrument and
+    //  a kit. All of it is ordinary parameters, so it automates and saves like
+    //  the rest, and a session saved before there were instruments comes back
+    //  with every voice on Note, which is how it sounded then.
+
+    static constexpr int voiceCount = inst::voiceCount;
+
+    /** "black", "white", "head1".."head9": how a voice's parameter IDs start. */
+    static juce::String voiceKey (int voice);
+
+    /** The channel a voice's notes go out on, as set on the Channels tab. */
+    int voiceChannel (int voice) const noexcept;
+
+    inst::Instrument voiceInstrument (int voice) const noexcept;
+
+    /** How many of its nine pads a voice's kit plays. */
+    int voicePads (int voice) const noexcept;
+
+    inst::Lanes drumLanes() const noexcept;
+
+    /** Whether the current mode plays this voice at all: Spiral plays black and
+        white, the multi head modes as many heads as they run. */
+    bool voiceInUse (int voice) const noexcept;
+
     juce::AudioProcessorValueTreeState apvts;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -308,6 +341,10 @@ public:
     static juce::StringArray playModeNames();
     static juce::StringArray lifeModeNames();
     static juce::StringArray aiPlayersNames();
+    static juce::StringArray instrumentNames();
+    static juce::StringArray scaleNames();
+    static juce::StringArray drumLaneNames();
+    static juce::StringArray voiceNames();
 
 private:
     //==============================================================================
@@ -326,8 +363,9 @@ private:
     struct TieState
     {
         go::Stone colour = go::Stone::none;
-        int note = -1;
+        int note = -1;                  //  the lowest, for a chord
         int channel = -1;
+        int instrument = -1;
     };
 
     void parameterChanged (const juce::String& parameterID, float newValue) override;
@@ -339,22 +377,24 @@ private:
     /** The size the board size parameter asks for. Its choices are listed in
         go::supportedSizes order, so the choice index is the size slot. */
     int chosenBoardSize() const noexcept;
-    /** Sends one note for the stone on idx, if there is one and it is still
-        inside its lifespan. Every mode goes through here, so the lifespan gate,
+    /** Sends the notes for the stone on idx, if there is one and it is still
+        inside its lifespan: one note, or three for a chord, as voice's
+        instrument decides. Every mode goes through here, so the lifespan gate,
         the gate length, retrigger safety and the note off queue are shared.
         head names the playhead this call belongs to (0 for spiral's single
         head), which is what ties two consecutive same-coloured stones under
-        the same head into one sustained note instead of a retrigger. */
-    void fireCell (int idx, int head, int channel, int semitoneOffset, int offsetInBlock,
+        the same head into one sustained note instead of a retrigger - for the
+        pitched instruments only, since a drum is struck and never held. */
+    void fireCell (int idx, int head, int voice, int semitoneOffset, int offsetInBlock,
                    juce::MidiBuffer& midi, double samplesPerStep);
 
-    /** The channel the spiral gives the stone on idx. An empty point falls
+    /** The voice the spiral gives the stone on idx. An empty point falls
         through to black's - fireCell drops it before anything is sent. */
-    int colourChannel (int idx) const noexcept;
+    int colourVoice (int idx) const noexcept;
 
-    /** The channel playhead head owns, as set - the heads are independent, so
-        this is a lookup and not an offset from a base. */
-    int headChannelFor (int head) const noexcept;
+    /** What voice is set to, with this head's transpose. Reads the kit only
+        when the instrument is Drums. */
+    inst::Voicing voicingFor (int voice, int transpose) const noexcept;
 
     /** The work of processBlock, apart from the port: fills the block with the
         notes this stretch of time plays. */
@@ -469,9 +509,9 @@ private:
     std::array<std::array<int, go::maxCells>, go::sizeCount> spiralTables {};
     std::array<std::array<std::array<int, go::maxCells>, go::quadCount>, go::sizeCount> quadTables {};
 
-    //  room for every ring to hold a note at once, with headroom for the
+    //  room for every ring to hold a chord at once, with headroom for the
     //  overlap when a long gate runs into the next step
-    std::array<PendingNoteOff, 32> pending {};
+    std::array<PendingNoteOff, 64> pending {};
     //  maxRings is the widest any mode gets: 9 rings beats 4 quadrants
     std::array<std::atomic<int>, go::maxRings> headPos {};
     //  one tie-tracking slot per playhead - maxHeadChannels is the widest any
@@ -528,6 +568,14 @@ private:
     juce::AudioParameterInt*    aiVariationParam = nullptr;
     juce::AudioParameterInt*    aiSeedParam      = nullptr;
     juce::AudioParameterChoice* aiPlayersParam   = nullptr;
+
+    juce::AudioParameterChoice* scaleParam       = nullptr;
+    juce::AudioParameterChoice* drumLanesParam   = nullptr;
+
+    //  one of each per voice, indexed as inst:: numbers them
+    std::array<juce::AudioParameterChoice*, (size_t) voiceCount> instrumentParam {};
+    std::array<juce::AudioParameterInt*, (size_t) voiceCount> padsParam {};
+    std::array<std::array<juce::AudioParameterInt*, (size_t) inst::maxPads>, (size_t) voiceCount> padParam {};
 
     //  re-entrancy guard: clampStoneLifeToWaveGap() sets stoneLifeParam,
     //  which would otherwise trigger parameterChanged() straight back into it

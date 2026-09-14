@@ -82,8 +82,10 @@ private:
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     /** The tabs the controls are split across. `pinned` is not a tab: it marks
-        the controls that stay beside the board whichever tab is open. */
-    enum Tab { pinned = -1, sequencerTab, boardTab, channelsTab, gameTab, aiTab, tabCount };
+        the controls that stay beside the board whichever tab is open. A saved
+        session names its open tab by number, so Instruments, the newest, is
+        numbered last - resized() shows it beside Channels all the same. */
+    enum Tab { pinned = -1, sequencerTab, boardTab, channelsTab, gameTab, aiTab, instrumentsTab, tabCount };
 
     void timerCallback() override;
 
@@ -197,6 +199,36 @@ private:
     juce::Label portCaption, portStatusLabel;
     juce::StringArray portItems;        //  item id i + 2 is portItems[i]; id 1 is Off
     bool lastPortOpenShown = false;
+
+    //  ---- instruments ------------------------------------------------------
+    /** Points the instrument, kit pads and pad controls at one voice's
+        parameters - black, white or a head, numbered as inst:: numbers them. */
+    void showVoice (int voice);
+
+    /** The enables and the two lines under the kit, for the voice on show. */
+    void refreshVoiceDisplay();
+
+    /** What those two lines say: the voice's channel, whether the mode plays
+        it, and how its instrument reads the board. */
+    juce::String voiceStatusText() const;
+
+    /** Everything the display is built from, to tell when to build it again -
+        the mode, a channel or the host automating an instrument can all move
+        it with nothing clicked on the tab. */
+    juce::String voiceDisplayKey() const;
+
+    juce::ComboBox voiceBox, instrumentBox, scaleBox, drumLanesBox;
+    juce::Slider padsSlider;
+    std::array<juce::Slider, (size_t) inst::maxPads> padSliders;
+    std::array<juce::Label, (size_t) inst::maxPads> padCaptions;
+    juce::Label voiceCaption, instrumentCaption, scaleCaption, drumLanesCaption, padsCaption, voiceStatusLabel;
+
+    std::unique_ptr<ComboBoxAttachment> instrumentAttachment, scaleAttachment, drumLanesAttachment;
+    std::unique_ptr<SliderAttachment>   padsAttachment;
+    std::array<std::unique_ptr<SliderAttachment>, (size_t) inst::maxPads> padAttachments;
+
+    int currentVoice = inst::black;
+    juce::String lastVoiceShown;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerEditor)
 };

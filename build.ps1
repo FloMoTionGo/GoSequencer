@@ -30,13 +30,15 @@ Write-Host "== build ($Config) ==" -ForegroundColor Cyan
 cmake --build "$build" --config $Config --parallel
 if ($LASTEXITCODE -ne 0) { throw "Build failed" }
 
-Write-Host "== rules tests ==" -ForegroundColor Cyan
-$tests = Join-Path $build "$Config\GoRulesTests.exe"
-if (Test-Path $tests) {
-    & $tests | Select-Object -Last 1
-    if ($LASTEXITCODE -ne 0) { throw "Go rules tests failed" }
-} else {
-    Write-Warning "test binary not found at $tests"
+Write-Host "== tests ==" -ForegroundColor Cyan
+foreach ($name in "GoRulesTests", "InstrumentTests") {
+    $tests = Join-Path $build "$Config\$name.exe"
+    if (Test-Path $tests) {
+        & $tests | Select-Object -Last 1
+        if ($LASTEXITCODE -ne 0) { throw "$name failed" }
+    } else {
+        Write-Warning "test binary not found at $tests"
+    }
 }
 
 $artefacts = Join-Path $build "GoSequencer_artefacts\$Config"

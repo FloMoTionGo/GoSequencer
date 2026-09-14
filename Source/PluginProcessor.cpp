@@ -48,6 +48,40 @@ juce::StringArray GoSequencerProcessor::aiPlayersNames()
     return { "Classic", "Reading" };
 }
 
+juce::StringArray GoSequencerProcessor::instrumentNames()
+{
+    //  inst::Instrument order, and a saved session stores the index: new ones on the end
+    return { "Note", "Melody", "Bass", "Chord", "Drums" };
+}
+
+juce::StringArray GoSequencerProcessor::scaleNames()
+{
+    return { "Major", "Minor", "Dorian", "Pentatonic", "Minor pentatonic", "Hirajoshi", "Yo", "Chromatic" };
+}
+
+juce::StringArray GoSequencerProcessor::drumLaneNames()
+{
+    return { "Rows", "Columns", "Rings" };
+}
+
+juce::StringArray GoSequencerProcessor::voiceNames()
+{
+    juce::StringArray names { "Black", "White" };
+
+    for (int h = 0; h < maxHeadChannels; ++h)
+        names.add ("Head " + juce::String (h + 1));
+
+    return names;
+}
+
+juce::String GoSequencerProcessor::voiceKey (int voice)
+{
+    if (voice == inst::black) return "black";
+    if (voice == inst::white) return "white";
+
+    return "head" + juce::String (voice - inst::firstHead + 1);
+}
+
 namespace
 {
     //  the MIDI out port is named in the state rather than by a parameter: it
@@ -198,6 +232,56 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "aiPlayers", 1 }, "AI Players",
                                                         aiPlayersNames(), 1));
 
+    //  ---- instruments ------------------------------------------------------
+    //  Shared by every voice: the scale the pitched instruments climb from the
+    //  Note, and the lanes a kit reads the board in.
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "scale", 2 }, "Scale",
+                                                        scaleNames(), (int) inst::Scale::minorPentatonic));
+
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "drumLanes", 2 }, "Drum Lanes",
+                                                        drumLaneNames(), (int) inst::Lanes::rows));
+
+    const auto voiceLabels = voiceNames();
+
+    for (int v = 0; v < voiceCount; ++v)
+    {
+        const auto key = voiceKey (v);
+        const auto& label = voiceLabels[v];
+
+        //  Note is how every voice sounded before there was a choice, so it is
+        //  the default - and a session saved without these comes back on it
+        layout.add (std::make_unique<AudioParameterChoice> (ParameterID { key + "Instrument", 2 },
+                                                            label + " Instrument",
+                                                            instrumentNames(), (int) inst::Instrument::note));
+
+        layout.add (std::make_unique<AudioParameterInt> (ParameterID { key + "Pads", 2 }, label + " Kit Pads",
+                                                         1, inst::maxPads, inst::maxPads,
+                                                         AudioParameterIntAttributes()
+                                                             .withStringFromValueFunction ([] (int n, int)
+                                                             {
+                                                                 return String (n) + (n == 1 ? " pad" : " pads");
+                                                             })));
+
+        for (int pad = 0; pad < inst::maxPads; ++pad)
+        {
+            layout.add (std::make_unique<AudioParameterInt> (ParameterID { key + "Pad" + String (pad + 1), 2 },
+                                                             label + " Pad " + String (pad + 1),
+                                                             0, 127, inst::defaultKit[(size_t) pad],
+                                                             AudioParameterIntAttributes()
+                                                                 .withStringFromValueFunction ([] (int note, int)
+                                                                 {
+                                                                     //  the note name a drum rack shows on its
+                                                                     //  pad, and the General MIDI drum it is
+                                                                     auto text = MidiMessage::getMidiNoteName (note, true, true, 3);
+
+                                                                     if (auto* name = inst::drumName (note))
+                                                                         text << " " << name;
+
+                                                                     return text;
+                                                                 })));
+        }
+    }
+
     return layout;
 }
 
@@ -238,7 +322,23 @@ GoSequencerProcessor::GoSequencerProcessor()
         headChannel[(size_t) h] = dynamic_cast<juce::AudioParameterInt*>
                                     (apvts.getParameter ("headChannel" + juce::String (h + 1)));
 
+    scaleParam       = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("scale"));
+    drumLanesParam   = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("drumLanes"));
+
+    for (int v = 0; v < voiceCount; ++v)
+    {
+        const auto key = voiceKey (v);
+
+        instrumentParam[(size_t) v] = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter (key + "Instrument"));
+        padsParam[(size_t) v]       = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter (key + "Pads"));
+
+        for (int pad = 0; pad < inst::maxPads; ++pad)
+            padParam[(size_t) v][(size_t) pad] = dynamic_cast<juce::AudioParameterInt*>
+                                                   (apvts.getParameter (key + "Pad" + juce::String (pad + 1)));
+    }
+
     jassert (noteParam != nullptr && rateParam != nullptr && boardSizeParam != nullptr);
+    jassert (scaleParam != nullptr && instrumentParam.back() != nullptr && padParam.back().back() != nullptr);
 
     for (int slot = 0; slot < go::sizeCount; ++slot)
     {
@@ -382,23 +482,83 @@ int GoSequencerProcessor::headCellAt (int head, int pos) const noexcept
     return spiralAt (pos);
 }
 
-int GoSequencerProcessor::colourChannel (int idx) const noexcept
+int GoSequencerProcessor::colourVoice (int idx) const noexcept
 {
     const bool white = (idx >= 0 && idx < go::maxCells)
                          && stones[(size_t) idx].load (std::memory_order_relaxed)
                               == (std::uint8_t) go::Stone::white;
 
-    auto* param = white ? whiteChannel : blackChannel;
+    return white ? inst::white : inst::black;
+}
+
+int GoSequencerProcessor::voiceChannel (int voice) const noexcept
+{
+    //  every channel is set outright, so this is a lookup and never an offset
+    juce::AudioParameterInt* param = nullptr;
+
+    if (voice == inst::black)
+        param = blackChannel;
+    else if (voice == inst::white)
+        param = whiteChannel;
+    else if (juce::isPositiveAndBelow (voice - inst::firstHead, (int) maxHeadChannels))
+        param = headChannel[(size_t) (voice - inst::firstHead)];
 
     return param != nullptr ? param->get() : 1;
 }
 
-int GoSequencerProcessor::headChannelFor (int head) const noexcept
+inst::Instrument GoSequencerProcessor::voiceInstrument (int voice) const noexcept
 {
-    if (head < 0 || head >= maxHeadChannels || headChannel[(size_t) head] == nullptr)
-        return 1;
+    const auto* param = juce::isPositiveAndBelow (voice, (int) voiceCount) ? instrumentParam[(size_t) voice] : nullptr;
 
-    return headChannel[(size_t) head]->get();
+    return param != nullptr ? (inst::Instrument) juce::jlimit (0, inst::instrumentCount - 1, param->getIndex())
+                            : inst::Instrument::note;
+}
+
+int GoSequencerProcessor::voicePads (int voice) const noexcept
+{
+    const auto* param = juce::isPositiveAndBelow (voice, (int) voiceCount) ? padsParam[(size_t) voice] : nullptr;
+
+    return param != nullptr ? param->get() : inst::maxPads;
+}
+
+inst::Lanes GoSequencerProcessor::drumLanes() const noexcept
+{
+    return drumLanesParam != nullptr ? (inst::Lanes) juce::jlimit (0, inst::laneModeCount - 1, drumLanesParam->getIndex())
+                                     : inst::Lanes::rows;
+}
+
+bool GoSequencerProcessor::voiceInUse (int voice) const noexcept
+{
+    const int heads = headCount();
+
+    if (voice == inst::black || voice == inst::white)
+        return heads == 1;
+
+    return heads > 1 && juce::isPositiveAndBelow (voice - inst::firstHead, heads);
+}
+
+inst::Voicing GoSequencerProcessor::voicingFor (int voice, int transpose) const noexcept
+{
+    inst::Voicing voicing;
+
+    voicing.instrument = voiceInstrument (voice);
+    voicing.root       = noteParam->get();
+    voicing.transpose  = transpose;
+    voicing.lanes      = drumLanes();
+
+    if (scaleParam != nullptr)
+        voicing.scale = (inst::Scale) juce::jlimit (0, inst::scaleCount - 1, scaleParam->getIndex());
+
+    if (voicing.instrument == inst::Instrument::drums && juce::isPositiveAndBelow (voice, (int) voiceCount))
+    {
+        voicing.pads = voicePads (voice);
+
+        for (int pad = 0; pad < inst::maxPads; ++pad)
+            if (const auto* param = padParam[(size_t) voice][(size_t) pad])
+                voicing.kit[(size_t) pad] = param->get();
+    }
+
+    return voicing;
 }
 
 bool GoSequencerProcessor::isSpent (int idx, int life) const noexcept
@@ -1164,7 +1324,7 @@ void GoSequencerProcessor::flushNoteOffs (juce::MidiBuffer& midi, int numSamples
     }
 }
 
-void GoSequencerProcessor::fireCell (int idx, int head, int channelIn, int semitoneOffset, int offsetInBlock,
+void GoSequencerProcessor::fireCell (int idx, int head, int voice, int semitoneOffset, int offsetInBlock,
                                      juce::MidiBuffer& midi, double samplesPerStep)
 {
     auto& tie = tieState[(size_t) juce::jlimit (0, (int) tieState.size() - 1, head)];
@@ -1193,57 +1353,86 @@ void GoSequencerProcessor::fireCell (int idx, int head, int channelIn, int semit
     }
 
     const bool isBlack = (stone == go::Stone::black);
-    const int channel  = juce::jlimit (1, 16, channelIn);
-    const int note     = juce::jlimit (0, 127, noteParam->get() + semitoneOffset);
+    const int channel  = juce::jlimit (1, 16, voiceChannel (voice));
     const int velocity = juce::jlimit (1, 127, isBlack ? blackVelocity->get() : whiteVelocity->get());
+
+    //  what this voice makes of the point: the Note on its own, a step of the
+    //  scale, a chord, or the pad a drum lane picks
+    const auto voicing = voicingFor (voice, semitoneOffset);
+    const auto notes   = inst::notesFor (voicing, idx, boardSize());
+    const int instrument = (int) voicing.instrument;
 
     const int gateSamples = juce::jlimit (1, juce::jmax (1, (int) samplesPerStep - 1),
                                           (int) (gateParam->get() * samplesPerStep));
 
-    //  Same colour as the stone this head just sounded: rather than close that
-    //  note and retrigger, push its note off further out so the two steps
-    //  read as one sustained note for the whole run of same-coloured stones.
-    if (tie.colour == stone && tie.note == note && tie.channel == channel)
+    //  Same colour as the stone this head just sounded, and the same notes:
+    //  rather than close them and retrigger, push their note offs further out
+    //  so the steps read as one sustained note - or chord - for the whole run of
+    //  same-coloured stones. A drum is struck, never held, so every stone under
+    //  a kit is a hit of its own.
+    if (voicing.instrument != inst::Instrument::drums
+         && tie.colour == stone && tie.note == notes.pitch[0] && tie.channel == channel
+         && tie.instrument == instrument)
     {
+        bool sustained = true;
+
+        for (int n = 0; n < notes.count; ++n)
+        {
+            bool found = false;
+
+            for (auto& p : pending)
+            {
+                if (p.active && p.note == notes.pitch[(size_t) n] && p.channel == channel)
+                {
+                    p.samplesLeft = offsetInBlock + gateSamples;
+                    found = true;
+                    break;
+                }
+            }
+
+            sustained = sustained && found;
+        }
+
+        if (sustained)
+            return;
+
+        //  a note it should be sustaining has already ended (a full pending
+        //  pool bumped it early) - fall through and start fresh ones instead
+    }
+
+    for (int n = 0; n < notes.count; ++n)
+    {
+        const int note = notes.pitch[(size_t) n];
+
+        //  retrigger safety: if this note is still ringing on this channel, close it first
         for (auto& p : pending)
         {
             if (p.active && p.note == note && p.channel == channel)
             {
-                p.samplesLeft = offsetInBlock + gateSamples;
-                return;
+                midi.addEvent (juce::MidiMessage::noteOff (p.channel, p.note), juce::jmax (0, offsetInBlock - 1));
+                p = {};
             }
         }
-        //  the note it should be sustaining has already ended (a full pending
-        //  pool bumped it early) - fall through and start a fresh one instead
-    }
 
-    //  retrigger safety: if this note is still ringing on this channel, close it first
-    for (auto& p : pending)
-    {
-        if (p.active && p.note == note && p.channel == channel)
+        midi.addEvent (juce::MidiMessage::noteOn (channel, note, (juce::uint8) velocity), offsetInBlock);
+
+        for (auto& p : pending)
         {
-            midi.addEvent (juce::MidiMessage::noteOff (p.channel, p.note), juce::jmax (0, offsetInBlock - 1));
-            p = {};
+            if (! p.active)
+            {
+                p.note        = note;
+                p.channel     = channel;
+                p.samplesLeft = offsetInBlock + gateSamples;
+                p.active      = true;
+                break;
+            }
         }
     }
 
-    midi.addEvent (juce::MidiMessage::noteOn (channel, note, (juce::uint8) velocity), offsetInBlock);
-
-    for (auto& p : pending)
-    {
-        if (! p.active)
-        {
-            p.note        = note;
-            p.channel     = channel;
-            p.samplesLeft = offsetInBlock + gateSamples;
-            p.active      = true;
-            break;
-        }
-    }
-
-    tie.colour  = stone;
-    tie.note    = note;
-    tie.channel = channel;
+    tie.colour     = stone;
+    tie.note       = notes.pitch[0];
+    tie.channel    = channel;
+    tie.instrument = instrument;
 }
 
 void GoSequencerProcessor::triggerStep (int stepIndex, int offsetInBlock,
@@ -1251,11 +1440,11 @@ void GoSequencerProcessor::triggerStep (int stepIndex, int offsetInBlock,
 {
     step.store (stepIndex, std::memory_order_relaxed);
 
-    //  one head, no transpose, routed by the colour it passed: an empty point
+    //  one head, no transpose, voiced by the colour it passed: an empty point
     //  and a spent stone both fall out inside fireCell
     const int idx = spiralAt (stepIndex);
 
-    fireCell (idx, 0, colourChannel (idx), 0, offsetInBlock, midi, samplesPerStep);
+    fireCell (idx, 0, colourVoice (idx), 0, offsetInBlock, midi, samplesPerStep);
 }
 
 void GoSequencerProcessor::triggerAt (long long absStep, int offsetInBlock,
@@ -1298,7 +1487,7 @@ void GoSequencerProcessor::triggerAt (long long absStep, int offsetInBlock,
                                : spiralAt (go::ringOffset (size, h) + pos);
 
         fireCell (cell, h,
-                  headChannelFor (h),                           //  this head's own channel
+                  inst::firstHead + h,                          //  this head's own channel and instrument
                   h * spread,                                   //  and its own transpose
                   offsetInBlock, midi, samplesPerStep);
     }

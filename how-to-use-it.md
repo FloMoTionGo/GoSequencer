@@ -10,7 +10,7 @@ deeper into *how* and *why* each feature behaves the way it does.
 > from a running build, and they still show the plugin's earlier dark,
 > single-column layout. The editor is now light and tabbed — the board on the
 > left, the controls split across the **Sequencer**, **Board**, **Channels**,
-> **Game** and **AI** tabs on the right — so read them for what each control
+> **Instruments**, **Game** and **AI** tabs on the right — so read them for what each control
 > does, not for where it sits on screen.
 
 ## Table of contents
@@ -23,7 +23,8 @@ deeper into *how* and *why* each feature behaves the way it does.
    - [Mode, Spread, Stone Life, Life Counts](#mode-spread-stone-life-life-counts)
    - [Board size, Place](#board-size-place)
    - [Ko rule, Self capture, Free run, Show path, Clear board](#ko-rule-self-capture-free-run-show-path-clear-board)
-5. [The Channels tab](#5-the-channels-tab)
+5. [The Channels and Instruments tabs](#5-the-channels-and-instruments-tabs)
+   - [Instruments and drum kits](#instruments-and-drum-kits)
 6. [The Game and AI tabs](#6-the-game-and-ai-tabs)
    - [AI self-play](#ai-self-play)
    - [The players, and what Leela gave them](#the-players-and-what-leela-gave-them)
@@ -63,13 +64,15 @@ On the right, top to bottom:
 - A **header**: the plugin name, a small stone swatch showing the colour the
   *next* click will place, and under it a status line (step count, capture
   tally, transport state).
-- A row of five **tabs**, and under it the controls of the open one:
+- A row of six **tabs**, and under it the controls of the open one:
   - **Sequencer** — step rate, note, gate, playhead mode, stone life, free
     run and spread.
   - **Board** — the rule switches, Show path, Clear board, and a reminder of
     how to interact with the board.
   - **Channels** — both velocities, every MIDI channel assignment, and the
     optional MIDI out port.
+  - **Instruments** — what each channel slot plays: Note, Melody, Bass, Chord
+    or a drum kit of up to nine pads, with the scale and the drum lanes.
   - **Game** — loading, running and scrubbing an SGF record, and Wave Replay.
   - **AI** — self-play and the opening it starts from.
 
@@ -136,9 +139,11 @@ does.
 - **Step rate** — how often the clock advances, as a musical division
   synced to host tempo: `1/1, 1/2, 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T,
   1/32` (default `1/16`). Triplet values are marked `T`.
-- **Note** — the base MIDI pitch (shown as a note name, e.g. `C3`). Every
-  fired stone's actual pitch is offset from this base by its board
-  position (and, in Polyrhythm mode, by that ring's **Spread**).
+- **Note** — the base MIDI pitch (shown as a note name, e.g. `C3`). A slot
+  on the *Note* instrument plays exactly this for every stone (plus its
+  head's **Spread** in the multi-head modes); *Melody*, *Bass* and *Chord*
+  climb the scale from it by the line a stone sits on. Drum kits don't use it.
+  See [Instruments and drum kits](#instruments-and-drum-kits).
 - **Gate** — note length as a percentage of one step (5%–100%). Short gates
   give a plucky, staccato feel; near 100% lets notes overlap into the next
   step.
@@ -151,7 +156,7 @@ does.
   explained in [§7](#7-playhead-modes-explained-in-depth).
 - **Spread** — semitone transpose applied per playhead (−12 to +12). Only
   meaningful once there's more than one playhead, so it's greyed out in
-  Spiral mode.
+  Spiral mode. Drum kits ignore it, so a pad always sends its own note.
 - **Stone Life** — how many steps/placements a stone keeps sounding after
   it's played (1–128; the top value shows as `hold`, meaning stones never
   expire). See [§8](#8-stone-lifespan-in-depth).
@@ -198,9 +203,10 @@ These two sit under the board, not on a tab.
   *not* unload a loaded game record; use **Unload** on the Game tab for
   that.
 
-## 5. The Channels tab
+## 5. The Channels and Instruments tabs
 
-Everything that decides how loud a note goes out, and on which channel:
+The **Channels** tab holds everything that decides how loud a note goes out,
+and on which channel:
 
 - **Black Velocity** / **White Velocity** — fixed MIDI velocity (1–127)
   sent for every note of that colour, in every mode. Doesn't depend on how
@@ -231,6 +237,79 @@ currently using.
 Every channel is assigned **outright** — nothing is derived from another
 slider. That means two heads (or black and white) can deliberately share a
 channel, or the whole board can sit on channel 1, with no side effects.
+
+### Instruments and drum kits
+
+The **Instruments** tab decides what each channel slot *plays*; the Channels
+tab decides where it goes. The slots are the same ones: **Black** and **White**
+(Spiral), and **Head 1** … **Head 9** (Polyrhythm and Quads).
+
+The tab shows one slot at a time:
+
+- **Voice** — which slot the controls below belong to. It's a view, not a
+  parameter; the slot you left showing is saved with the session.
+- **Instrument** — what that slot plays:
+  - **Note** (default) — the **Note** from the Sequencer tab, plus the head's
+    **Spread**. Every stone plays the same pitch. This is how Go Sequencer
+    sounded before there were instruments, and what an older session comes
+    back on.
+  - **Melody** — the line a stone sits on picks a step of the **Scale**. The
+    board's middle line (tengen's) plays the Note; each line up is one step
+    higher, each line down one step lower. A 9×9 spans 9 steps, a 13×13 13
+    and a 19×19 19.
+  - **Bass** — the melody's step two octaves below the Note, folded into one
+    octave: past the top of the octave it wraps back to the root, so the part
+    never leaves the bass register.
+  - **Chord** — the melody's note with the third and fifth *of the scale*
+    above it, so every chord stays in key (on *Chromatic*, where every step is
+    a semitone, a major triad instead). Three notes per stone.
+  - **Drums** — one of the slot's kit pads, picked by where the stone sits
+    (below).
+- **Scale** — *Major*, *Minor*, *Dorian*, *Pentatonic*, *Minor pentatonic*
+  (the default), *Hirajoshi*, *Yo* or *Chromatic*. Shared by every slot, and
+  greyed out unless the slot on show plays Melody, Bass or Chord.
+- **Drum lanes** — how the board is cut into lanes for the kits, shared by
+  every slot:
+  - **Rows** — line 1, the bottom line, plays pad 1; each line up the next pad.
+  - **Columns** — column A plays pad 1; each column to the right the next pad.
+  - **Rings** — the outermost ring plays pad 1; each ring further in the next
+    pad, with tengen last.
+- **Kit pads** (1–9) — how many of the nine pads this slot's kit uses.
+- **Pad 1** … **Pad 9** — the MIDI note each pad sends, shown as its note name
+  and General MIDI drum (`C1 Kick`, `D1 Snare`, `F#1 Hat` …). Out of the box:
+  kick, snare, closed hat, open hat, clap, low tom, high tom, rim, crash. Pads
+  past **Kit pads** are greyed out.
+
+**How lanes meet pads.** While the board has no more lanes than the kit has
+pads, lane *n* plays pad *n* and the pads past the last lane rest: a 9×9's
+five rings on a nine-pad kit use pads 1–5. Once the board has more lanes than
+pads, the lanes are shared out in even bands, starting from the first: a
+19×19's nineteen rows over nine pads give each pad about two rows, and a
+two-pad kit splits any board in half.
+
+**Drums are struck, pitched instruments are held.** Two stones of the same
+colour one after the other under the same playhead normally tie into one
+sustained note (or chord). A kit never ties: every stone is a hit of its own,
+so a run of five black stones is five hits.
+
+**Spread** transposes Note, Melody, Bass and Chord by the head's semitones. A
+drum pad always sends exactly the note it is set to, so a kit never lands on
+the wrong drum. **Gate** and the colour **velocities** apply to every
+instrument.
+
+The two lines under the pads say which channel the slot is on and, in a
+sentence, how its instrument reads the board. If the current **Mode** doesn't
+play that slot (a head in Spiral, black or white in Polyrhythm, heads 5–9 on a
+9×9), the first line says so in the accent colour. Everything stays editable,
+so a kit can be set up before you switch modes.
+
+**With a Drum Rack in Live.** A Drum Rack's first pad is C1 (MIDI 36), and
+Live numbers octaves the same way the pads here do, so `C1 Kick` lands on the
+rack's first pad. Without the MIDI out port, Live merges every slot onto one
+receiving track, so all the kits play the same rack: give them different pads
+to keep them apart. To give each head's kit its own rack, send the heads to
+separate tracks through the port
+([§10](#one-track-per-channel-the-midi-out-port-needs-loopmidi)).
 
 ## 6. The Game and AI tabs
 
@@ -737,6 +816,13 @@ and — separately — the loaded game record and its current scrub position.
 Saving your DAW project (or a plugin preset, if your host supports them)
 recalls the sequencer exactly as you left it, board included.
 
+The instruments are parameters as well: each slot's instrument, kit size and
+nine pads, plus the shared **Scale** and **Drum lanes**. The slot the
+Instruments tab was showing rides along like the open tab. A session saved
+before there were instruments (1.0.0) has none of these, so every slot comes
+back on **Note** with the default kit — exactly how it sounded when it was
+saved.
+
 A self-play run is saved differently, and more cheaply: the record itself is
 not written into the session at all. The **Players**, the **Seed**, the **Game
 length**, the **Variation**, the opening and which game of the run was playing
@@ -815,7 +901,11 @@ cmake --build build --target GoRulesTests --config Release
 ctest --test-dir build -C Release --output-on-failure
 ```
 
-(`build.ps1` runs this automatically after every build.)
+What a stone plays — scales, drum lanes, pads and the notes each instrument
+sends — is plain C++ too ([`Source/Instruments.h`](Source/Instruments.h)), and
+`InstrumentTests` checks it; `ctest` runs both test programs.
+
+(`build.ps1` runs both automatically after every build.)
 
 ### Troubleshooting the build
 
@@ -859,12 +949,14 @@ GoSequencer/
 │   ├── GoAI.h              # The self-play players, classic and reading (no JUCE deps, no floats)
 │   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE deps)
+│   ├── Instruments.h       # What a stone plays: instruments, scales, drum kits (no JUCE deps)
 │   └── SgfParser.h         # Minimal SGF (game record) reader
 ├── sgf/                    # Sample game records for trying SGF playback
 ├── tools/
 │   └── GoAiDump.cpp        # Runs the two players outside the plugin, writes .sgf
 └── tests/
-    └── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
+    ├── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
+    └── InstrumentTests.cpp # Scales, drum lanes and the notes a stone sends, run via ctest
 ```
 
 For a shorter overview, see [README.md](README.md).

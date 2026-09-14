@@ -13,6 +13,7 @@ namespace
     constexpr int titleHeight = 22, statusHeight = 18, tabHeight = 26, tabGap = 24, headerGap = 18;
     constexpr int textLinesHeight = 36;         //  two lines of the value font
     constexpr int narrowValueWidth = 36;        //  a MIDI channel needs two digits
+    constexpr int padValueWidth = 88;           //  a note name and a drum: "A#1 Open hat"
     constexpr int stepButtonWidth = 36;
 
     //  a button carrying this property is drawn as a tab rather than a switch
@@ -23,6 +24,9 @@ namespace
 
     //  so does the light/dark choice
     const juce::Identifier darkModeProperty { "darkMode" };
+
+    //  and which voice the Instruments tab was showing
+    const juce::Identifier instrumentVoiceProperty { "instrumentVoice" };
 
     juce::Font captionFont() { return theme::font (11.0f, juce::Font::plain, 0.06f); }
     juce::Font valueFont()   { return theme::font (12.5f); }
@@ -331,7 +335,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     //  ---- the tabs ---------------------------------------------------------
     //  One tab of controls at a time, laid out in the same rectangle, so
     //  switching never resizes the window under the host.
-    const char* const tabNames[tabCount] = { "Sequencer", "Board", "Channels", "Game", "AI" };
+    const char* const tabNames[tabCount] = { "Sequencer", "Board", "Channels", "Game", "AI", "Instruments" };
 
     for (int t = 0; t < tabCount; ++t)
     {
@@ -414,6 +418,45 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setUpCaption (channelsTab, portCaption, "midi out port");
     setUpText (channelsTab, portStatusLabel, juce::Justification::topLeft);
     refreshPortList();
+
+    //  ---- instruments ------------------------------------------------------
+    //  One voice at a time, picked with the first dropdown, so eleven voices
+    //  with a kit of nine pads each take no more room than one. That dropdown
+    //  is not a parameter: it only says whose parameters the controls under it
+    //  are showing, and rides along in the state like the open tab.
+    voiceBox.addItemList (GoSequencerProcessor::voiceNames(), 1);
+    voiceBox.setTitle ("voice");
+    voiceBox.onChange = [this] { showVoice (voiceBox.getSelectedId() - 1); };
+    addToTab (instrumentsTab, voiceBox);
+    setUpCaption (instrumentsTab, voiceCaption, "voice");
+
+    //  attached in showVoice(), to the voice on show
+    instrumentBox.addItemList (GoSequencerProcessor::instrumentNames(), 1);
+    addToTab (instrumentsTab, instrumentBox);
+    setUpCaption (instrumentsTab, instrumentCaption, "instrument");
+
+    setUpCombo (instrumentsTab, scaleBox, scaleCaption, "scale", GoSequencerProcessor::scaleNames(),
+                "scale", scaleAttachment);
+    setUpCombo (instrumentsTab, drumLanesBox, drumLanesCaption, "drum lanes", GoSequencerProcessor::drumLaneNames(),
+                "drumLanes", drumLanesAttachment);
+
+    {
+        //  set up on black's kit; showVoice() below moves them to the voice on show
+        const auto first = GoSequencerProcessor::voiceKey (inst::black);
+
+        setUpSlider (instrumentsTab, padsSlider, padsCaption, "kit pads", first + "Pads", padsAttachment);
+
+        for (int pad = 0; pad < inst::maxPads; ++pad)
+            setUpSlider (instrumentsTab, padSliders[(size_t) pad], padCaptions[(size_t) pad],
+                         "pad " + juce::String (pad + 1), first + "Pad" + juce::String (pad + 1),
+                         padAttachments[(size_t) pad], padValueWidth);
+    }
+
+    setUpText (instrumentsTab, voiceStatusLabel, juce::Justification::topLeft);
+
+    //  a new instance opens on a voice its mode is playing
+    showVoice ((int) processor.apvts.state.getProperty (instrumentVoiceProperty,
+                                                        processor.headCount() > 1 ? inst::firstHead : inst::black));
 
     //  ---- game record ------------------------------------------------------
     setUpText (gameTab, gameTitleLabel, juce::Justification::centredLeft);
@@ -576,6 +619,7 @@ void GoSequencerEditor::setDarkMode (bool dark)
     refreshOpeningDisplay();
     refreshGameDisplay();
     refreshPortStatus();
+    refreshVoiceDisplay();
 
     processor.apvts.state.setProperty (darkModeProperty, dark, nullptr);
 
@@ -781,6 +825,143 @@ void GoSequencerEditor::refreshPortStatus()
 }
 
 //==============================================================================
+void GoSequencerEditor::showVoice (int voice)
+{
+    currentVoice = juce::jlimit (0, GoSequencerProcessor::voiceCount - 1, voice);
+    voiceBox.setSelectedId (currentVoice + 1, juce::dontSendNotification);
+
+    auto& apvts = processor.apvts;
+    const auto key  = GoSequencerProcessor::voiceKey (currentVoice);
+    const auto name = GoSequencerProcessor::voiceNames()[currentVoice];
+
+    //  One attachment per control at a time: the old one goes before the new one
+    //  is made, or both would answer the control and fight over it. A new one
+    //  reads its parameter's range, text and value and writes nothing back, so
+    //  moving between voices sends the host no automation.
+    instrumentAttachment.reset();
+    instrumentAttachment = std::make_unique<ComboBoxAttachment> (apvts, key + "Instrument", instrumentBox);
+    instrumentBox.setTitle (name + " instrument");
+
+    padsAttachment.reset();
+    padsAttachment = std::make_unique<SliderAttachment> (apvts, key + "Pads", padsSlider);
+    padsSlider.setTitle (name + " kit pads");
+
+    for (int pad = 0; pad < inst::maxPads; ++pad)
+    {
+        auto& slider = padSliders[(size_t) pad];
+        auto& attachment = padAttachments[(size_t) pad];
+
+        attachment.reset();
+        attachment = std::make_unique<SliderAttachment> (apvts, key + "Pad" + juce::String (pad + 1), slider);
+        slider.setTitle (name + " pad " + juce::String (pad + 1));
+    }
+
+    apvts.state.setProperty (instrumentVoiceProperty, currentVoice, nullptr);
+    refreshVoiceDisplay();
+}
+
+void GoSequencerEditor::refreshVoiceDisplay()
+{
+    const auto instrument = processor.voiceInstrument (currentVoice);
+    const bool drums   = (instrument == inst::Instrument::drums);
+    const bool pitched = (instrument == inst::Instrument::melody || instrument == inst::Instrument::bass
+                           || instrument == inst::Instrument::chord);
+    const int pads = processor.voicePads (currentVoice);
+
+    //  grey out what this voice's instrument does not read, the way the
+    //  Channels tab greys out what the mode does not route by
+    scaleBox.setEnabled (pitched);
+    drumLanesBox.setEnabled (drums);
+    padsSlider.setEnabled (drums);
+
+    for (int pad = 0; pad < inst::maxPads; ++pad)
+        padSliders[(size_t) pad].setEnabled (drums && pad < pads);
+
+    voiceStatusLabel.setText (voiceStatusText(), juce::dontSendNotification);
+    voiceStatusLabel.setColour (juce::Label::textColourId,
+                                processor.voiceInUse (currentVoice) ? theme::dimText : theme::accent);
+
+    lastVoiceShown = voiceDisplayKey();
+}
+
+juce::String GoSequencerEditor::voiceStatusText() const
+{
+    const juce::String dot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
+    const int voice = currentVoice;
+
+    juce::String text;
+    text << GoSequencerProcessor::voiceNames()[voice] << " on channel " << processor.voiceChannel (voice);
+
+    if (! processor.voiceInUse (voice))
+    {
+        text << dot << "silent in this mode, which plays ";
+
+        if (processor.headCount() == 1)
+            text << "black and white";
+        else
+            text << "heads 1 to " << processor.headCount();
+    }
+
+    text << "\n";
+
+    switch (processor.voiceInstrument (voice))
+    {
+        case inst::Instrument::note:
+            text << "every stone plays the note set on the Sequencer tab";
+            break;
+
+        case inst::Instrument::melody:
+            text << "each line up the board is a step up the scale, the middle line on the note";
+            break;
+
+        case inst::Instrument::bass:
+            text << "the melody two octaves down, folded into one octave";
+            break;
+
+        case inst::Instrument::chord:
+            text << "the melody's note with the scale's third and fifth above it";
+            break;
+
+        case inst::Instrument::drums:
+        {
+            const auto lanes = processor.drumLanes();
+            const int count  = inst::laneCount (lanes, processor.boardSize());
+            const int pads   = processor.voicePads (voice);
+
+            const bool rows = (lanes == inst::Lanes::rows), cols = (lanes == inst::Lanes::columns);
+            const juce::String first = rows ? "line 1" : (cols ? "column A" : "the edge");
+
+            if (count > pads)
+            {
+                text << "the " << count << (rows ? " lines" : (cols ? " columns" : " rings"))
+                     << " share " << pads << (pads == 1 ? " pad" : " pads") << ", " << first << " on pad 1";
+            }
+            else
+            {
+                text << first << " plays pad 1, each " << (rows ? "line up" : (cols ? "column right" : "ring in"))
+                     << " the next";
+
+                //  a kit bigger than the board has lanes for: say which pads wait
+                if (count + 1 == pads)
+                    text << dot << "pad " << pads << " rests";
+                else if (count < pads)
+                    text << dot << "pads " << (count + 1) << " to " << pads << " rest";
+            }
+
+            break;
+        }
+    }
+
+    return text;
+}
+
+juce::String GoSequencerEditor::voiceDisplayKey() const
+{
+    return voiceStatusText() + "|" + juce::String (processor.voicePads (currentVoice))
+         + "|" + juce::String ((int) processor.voiceInUse (currentVoice));
+}
+
+//==============================================================================
 bool GoSequencerEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (const auto& file : files)
@@ -851,12 +1032,25 @@ void GoSequencerEditor::resized()
     }
 
     {
+        //  in reading order, which is not the order they are numbered in -
+        //  see Tab - with Instruments beside the Channels it plays through
+        static constexpr int tabOrder[tabCount] = { sequencerTab, boardTab, channelsTab, instrumentsTab, gameTab, aiTab };
+
         auto strip = column.removeFromTop (tabHeight);
+        int names = 0;
 
         for (auto& tab : tabButtons)
+            names += textWidth (tabFont(), tab.getButtonText().toUpperCase()) + 2;
+
+        //  six names do not fit the narrowest column at the full gap, so the
+        //  gap gives way before a name is cut
+        const int gap = juce::jlimit (8, tabGap, (strip.getWidth() - names) / (tabCount - 1));
+
+        for (int t : tabOrder)
         {
+            auto& tab = tabButtons[(size_t) t];
             tab.setBounds (strip.removeFromLeft (textWidth (tabFont(), tab.getButtonText().toUpperCase()) + 2));
-            strip.removeFromLeft (tabGap);
+            strip.removeFromLeft (gap);
         }
     }
 
@@ -924,6 +1118,33 @@ void GoSequencerEditor::resized()
         //  and under it two lines saying whether it is open
         placeLabelled (nextRow (rows, cellHeight), portCaption, portBox);
         portStatusLabel.setBounds (rows.removeFromTop (textLinesHeight));
+    }
+
+    //  ---- instruments ------------------------------------------------------
+    {
+        auto rows = column;
+
+        //  whose controls these are and what it plays, beside the scale every
+        //  pitched voice climbs
+        auto cells = columns (nextRow (rows, cellHeight), 3);
+        placeLabelled (cells[0], voiceCaption, voiceBox);
+        placeLabelled (cells[1], instrumentCaption, instrumentBox);
+        placeLabelled (cells[2], scaleCaption, scaleBox);
+
+        //  the kit: how it reads the board, how many pads, then the nine pads
+        cells = columns (nextRow (rows, cellHeight), 2);
+        placeLabelled (cells[0], drumLanesCaption, drumLanesBox);
+        placeSlider (cells[1], padsCaption, padsSlider);
+
+        for (int first = 0; first < inst::maxPads; first += 3)
+        {
+            cells = columns (nextRow (rows, cellHeight), 3);
+
+            for (int pad = first; pad < first + 3; ++pad)
+                placeSlider (cells[(size_t) (pad - first)], padCaptions[(size_t) pad], padSliders[(size_t) pad]);
+        }
+
+        voiceStatusLabel.setBounds (rows.removeFromTop (textLinesHeight));
     }
 
     //  ---- game record ------------------------------------------------------
@@ -1072,6 +1293,11 @@ void GoSequencerEditor::timerCallback()
     //  though never from under an open popup
     if (processor.midiOutPortOpen() != lastPortOpenShown && ! portBox.isPopupActive())
         refreshPortList();
+
+    //  the voice on show can change what it says with nothing clicked here -
+    //  the mode, the board, its channel, the host automating its instrument
+    if (voiceDisplayKey() != lastVoiceShown)
+        refreshVoiceDisplay();
 
     const int position = processor.gamePosition();
 
