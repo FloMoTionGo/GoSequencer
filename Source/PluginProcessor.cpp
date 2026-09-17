@@ -28,8 +28,10 @@ juce::StringArray GoSequencerProcessor::gameRateNames()
 juce::StringArray GoSequencerProcessor::boardSizeNames()
 {
     //  go::supportedSizes order, so a choice index is a size slot - and new
-    //  sizes go on the end, so a saved session's index still means its board
-    return { "9 x 9", "13 x 13", "19 x 19" };
+    //  sizes go on the end, so a saved session's index still means its board.
+    //  That is why the 8x8 is last rather than first: it was added for the
+    //  Launchpad, whose grid of pads is exactly that board.
+    return { "9 x 9", "13 x 13", "19 x 19", "8 x 8" };
 }
 
 juce::StringArray GoSequencerProcessor::playModeNames()
@@ -704,7 +706,7 @@ juce::String GoSequencerProcessor::loadSgfText (const juce::String& text, const 
 
     if (! go::isSupportedSize (parsed.size))
         return juce::String (parsed.size) + "x" + juce::String (parsed.size)
-             + " records are not supported - 9x9, 13x13 and 19x19 only";
+             + " records are not supported - 8x8, 9x9, 13x13 and 19x19 only";
 
     //  a loaded record takes the board over from the players, and the switch
     //  goes off with it - checked before anything is written, so a record that
@@ -881,6 +883,10 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
     //  the choice lists the pairs in goai::Players order, so its index is the pair
     settings.players   = aiPlayersParam != nullptr ? (goai::Players) aiPlayersParam->getIndex()
                                                    : goai::Players::reading;
+
+    //  8x8 has reading weights of its own; every other size keeps the ones it had
+    settings.readingBlack = goai::readingBlack (size);
+    settings.readingWhite = goai::readingWhite (size);
 
     //  a custom opening is a set of points, so it only means anything on the
     //  board it was played on; on any other one the book takes over again

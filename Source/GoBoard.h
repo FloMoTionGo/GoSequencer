@@ -15,20 +15,26 @@
 
 namespace go
 {
-    inline constexpr int minSize  = 9;
+    inline constexpr int minSize  = 8;
     inline constexpr int maxSize  = 19;
     inline constexpr int maxCells = maxSize * maxSize;   // 361
 
-    /** The boards there are, smallest first. A size's place in this list is its
-        slot: tables kept per size are indexed by it, and the plugin's board size
-        choice lists them in the same order. */
-    inline constexpr int sizeCount = 3;
-    inline constexpr std::array<int, sizeCount> supportedSizes { 9, 13, 19 };
+    /** The boards there are, in the order they were added. A size's place in
+        this list is its slot: tables kept per size are indexed by it, and the
+        plugin's board size choice lists them in the same order. A new size goes
+        on the end rather than in its natural place, so a saved session's stored
+        choice index still means the board it meant when it was saved.
 
-    inline constexpr bool isSupportedSize (int s) noexcept { return s == 9 || s == 13 || s == 19; }
+        8x8 is the odd one out, and it is last for that reason. It is there
+        because a Launchpad X has an 8x8 grid of pads: that board and that
+        controller are the same shape, so the whole board fits on the grid. */
+    inline constexpr int sizeCount = 4;
+    inline constexpr std::array<int, sizeCount> supportedSizes { 9, 13, 19, 8 };
+
+    inline constexpr bool isSupportedSize (int s) noexcept { return s == 9 || s == 13 || s == 19 || s == 8; }
 
     /** The slot of a supported size; anything else falls back to the 9x9's. */
-    inline constexpr int sizeSlot (int s) noexcept { return s == 19 ? 2 : (s == 13 ? 1 : 0); }
+    inline constexpr int sizeSlot (int s) noexcept { return s == 19 ? 2 : (s == 13 ? 1 : (s == 8 ? 3 : 0)); }
 
     enum class Stone : std::uint8_t { none = 0, black = 1, white = 2 };
 
@@ -95,14 +101,21 @@ namespace go
         no table of its own: it is the slice of the spiral that starts at
         ringOffset() and runs for ringLength() points.
 
+            8x8    4 rings of 28, 20, 12 and  4 points
             9x9    4 rings of 32, 24, 16 and  8 points
             13x13  6 rings of 48, 40, 32, 24, 16 and 8 points
             19x19  9 rings of 72, 64, 56, 48, 40, 32, 24, 16 and 8 points
 
-        The lengths fall in whole number ratios (4:3:2:1, 6:5:4:3:2:1 and
-        9:8:...:1), which is what makes one playhead per ring a polyrhythm
-        rather than a mess. */
-    inline constexpr int ringCount  (int size)        noexcept { return (size - 1) / 2; }
+        The lengths fall in whole number ratios (7:5:3:1, 4:3:2:1, 6:5:4:3:2:1
+        and 9:8:...:1), which is what makes one playhead per ring a polyrhythm
+        rather than a mess.
+
+        An even board has no tengen to leave out. Its innermost ring is the
+        square of four points in the middle, which does rotate, so the rings
+        cover every point and none is left over. size / 2 says both at once: it
+        is the same number as (size - 1) / 2 on every odd board, and one more
+        on an even one. */
+    inline constexpr int ringCount  (int size)        noexcept { return size / 2; }
     inline constexpr int ringOffset (int size, int r) noexcept { return 4 * r * (size - r); }
     inline constexpr int ringLength (int size, int r) noexcept { return 4 * (size - 1 - 2 * r); }
 
@@ -115,6 +128,13 @@ namespace go
             9x9    four 5x5 blocks,   5 + 5 - 1 == 9
             13x13  four 7x7 blocks,   7 + 7 - 1 == 13
             19x19  four 10x10 blocks, 10 + 10 - 1 == 19
+            8x8    four 4x4 blocks,   4 + 4     == 8
+
+        An even board is the exception: it has no middle line for the blocks to
+        share, so the four of them tile it rather than overlapping. Every point
+        is played once a lap, instead of the middle cross being played twice and
+        tengen four times. That is a different thing to listen to, and it is
+        part of what the 8x8 is for.
 
         On the two smaller boards the side is odd, and the block's centre is the
         corner star point - the san-san (3-3) point on a 9x9, the 4-4 point on a
@@ -129,14 +149,17 @@ namespace go
     inline constexpr int quadSide   (int size) noexcept { return (size + 1) / 2; }
     inline constexpr int quadSteps  (int size) noexcept { return quadSide (size) * quadSide (size); }
 
+    //  size - quadSide() rather than quadSide() - 1: the same number on every
+    //  odd board, where the two blocks share their middle line, and the right
+    //  one on an even board, where they sit side by side and share nothing.
     inline constexpr int quadOriginCol (int size, int q) noexcept
     {
-        return (q == 1 || q == 2) ? quadSide (size) - 1 : 0;
+        return (q == 1 || q == 2) ? size - quadSide (size) : 0;
     }
 
     inline constexpr int quadOriginRow (int size, int q) noexcept
     {
-        return (q >= 2) ? quadSide (size) - 1 : 0;
+        return (q >= 2) ? size - quadSide (size) : 0;
     }
 
     /** One quadrant's spiral, winding in to the middle of its block. Reverse it
@@ -158,16 +181,18 @@ namespace go
         return n;
     }
 
-    /** The handicap points: the four corner stars and tengen. */
+    /** The handicap points: the four corner stars and tengen. An even board has
+        no tengen - nothing sits in the middle of it - so the fifth point comes
+        back as -1 there and callers leave it out. */
     inline std::array<int, 5> starPoints (int size) noexcept
     {
-        const int e = (size >= 13 ? 3 : 2);          // 4-4 points on 13x13 and 19x19, 3-3 on 9x9
+        const int e = (size >= 13 ? 3 : 2);          // 4-4 points on 13x13 and 19x19, 3-3 on the small boards
         const int f = size - 1 - e;
         const int m = size / 2;
 
         return { index (e, e, size), index (f, e, size),
                  index (e, f, size), index (f, f, size),
-                 index (m, m, size) };
+                 size % 2 == 1 ? index (m, m, size) : -1 };
     }
 
     inline constexpr int maxHoshi = 9;
@@ -181,7 +206,8 @@ namespace go
         int n = 0;
 
         for (int star : stars)
-            out[(size_t) n++] = star;
+            if (star >= 0)                           // an even board has no tengen to mark
+                out[(size_t) n++] = star;
 
         if (size >= 19)
         {

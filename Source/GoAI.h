@@ -310,6 +310,18 @@ namespace goai
         return s;
     }
 
+    /** The reading pair for a board size. 8x8 is tuned on its own (below); every
+        other size plays the two above, exactly as it always has. */
+    inline ReadingStyle readingBlack (int size)
+    {
+        return readingTerritorial();
+    }
+
+    inline ReadingStyle readingWhite (int size)
+    {
+        return readingFighting();
+    }
+
     //==============================================================================
     /** The book both players open from unless they are given an opening of their
         own, as (column, row) pairs, Black first. On the two small boards these
@@ -349,7 +361,16 @@ namespace goai
             { 2, 5 }, { 8, 2 }, { 16, 13 }, { 13, 16 }, { 16, 10 }
         };
 
-        return size == 19 ? book19 : (size == 13 ? book13 : book9);
+        //  The four 3-3 points, then a crosscut in the middle of the small
+        //  board and one extension each. An 8x8 has no tengen to take, so the
+        //  fight starts in the centre square rather than around a middle point.
+        static const std::vector<std::pair<int, int>> book8
+        {
+            { 2, 2 }, { 5, 5 }, { 5, 2 }, { 2, 5 }, { 4, 4 },
+            { 3, 4 }, { 4, 3 }, { 3, 3 }, { 6, 3 }, { 1, 4 }
+        };
+
+        return size == 19 ? book19 : (size == 13 ? book13 : (size == 8 ? book8 : book9));
     }
 
     /** How long an opening is, book or custom: ten moves, black first. */

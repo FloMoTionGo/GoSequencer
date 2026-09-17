@@ -127,7 +127,8 @@ public:
     int  spiralAt (int step) const noexcept;
 
     //  Rings. ringCount() is 4 on a 9x9, 6 on a 13x13 and 9 on a 19x19: tengen
-    //  is left out.
+    //  is left out. An 8x8 has 4 as well, and leaves nothing out - an even
+    //  board has no tengen, and its innermost ring is the middle square.
     bool isPolyrhythm()   const noexcept;
     int  ringCount()      const noexcept { return go::ringCount (boardSize()); }
 

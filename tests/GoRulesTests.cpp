@@ -732,6 +732,8 @@ namespace
         s.variation = variation;
         s.seed = seed;
         s.players = players;
+        s.readingBlack = goai::readingBlack (size);
+        s.readingWhite = goai::readingWhite (size);
         return s;
     }
 
@@ -1068,6 +1070,319 @@ namespace
         check (a.moveCount() == bCount && b.moveCount() == aCount, "and took their lengths with them");
         check (b.moves[0].index == aFirst, "the game that was playing is intact on the other side");
         check (b.blackRank == "territorial" && b.whiteRank == "fighting", "and so are the players' names");
+    }
+
+    //==============================================================================
+    //  The 8x8 board. It is there because a Launchpad X has an 8x8 grid of pads,
+    //  so that board and that controller are the same shape. It is also the only
+    //  even board, and even is where the geometry differs: there is no tengen for
+    //  the rings to leave out, and no middle line for the quadrants to share.
+    //
+    //  The three odd boards are checked beside it at every step. The formulas
+    //  were rewritten rather than branched - size / 2 for the rings, size minus
+    //  quadSide for the blocks - on the grounds that the new form is the same
+    //  number on an odd board. These checks are what makes that a fact.
+
+    int ix8 (int col, int row) { return go::index (col, row, 8); }
+
+    void testSize8()
+    {
+        std::printf ("8x8: the board exists\n");
+
+        check (go::isSupportedSize (8), "8x8 is a board there is");
+        check (go::sizeCount == 4 && go::supportedSizes[3] == 8,
+               "and it sits in the last slot, so a saved session's index still means its board");
+        check (go::sizeSlot (8) == 3, "slot 3");
+        check (go::sizeSlot (9) == 0 && go::sizeSlot (13) == 1 && go::sizeSlot (19) == 2,
+               "and the three that were already there keep the slots they had");
+        check (go::minSize == 8, "the smallest board there is");
+        check (! go::isSupportedSize (7) && ! go::isSupportedSize (10),
+               "7x7 and 10x10 are still not boards");
+
+        go::Board b (8);
+        check (b.size() == 8 && b.cellCount() == 64, "64 points");
+
+        b.play (ix8 (3, 3), Stone::black, false, true);
+        b.setSize (8);
+        check (b.stoneCount() == 1, "setting the size it already is leaves the board alone");
+
+        b.setSize (9);
+        check (b.size() == 9 && b.stoneCount() == 0, "changing off it wipes, as any size change does");
+        b.setSize (8);
+        check (b.size() == 8, "and back again");
+    }
+
+    void testSpiral8()
+    {
+        std::printf ("spiral order, 8x8\n");
+
+        std::array<int, go::maxCells> order {};
+        const int count = go::spiralOrder (8, order);
+
+        check (count == 64, "64 steps");
+        check (order[0] == ix8 (0, 0) && order[7] == ix8 (7, 0),
+               "starts along the top edge, left to right");
+
+        std::array<int, go::maxCells> seen {};
+        bool inRange = true;
+
+        for (int i = 0; i < count; ++i)
+        {
+            if (order[(size_t) i] < 0 || order[(size_t) i] >= count) inRange = false;
+            else ++seen[(size_t) order[(size_t) i]];
+        }
+
+        check (inRange, "every step lands on the board");
+
+        bool once = true;
+
+        for (int i = 0; i < count; ++i)
+            if (seen[(size_t) i] != 1) once = false;
+
+        check (once, "and every point is touched exactly once");
+
+        //  an even board has no middle point to finish on, so the spiral ends
+        //  on one of the four in the centre square
+        const int last = order[(size_t) (count - 1)];
+        const int lc = go::colOf (last, 8), lr = go::rowOf (last, 8);
+
+        check (lc >= 3 && lc <= 4 && lr >= 3 && lr <= 4,
+               "and finishes in the middle square, there being no middle point");
+    }
+
+    void testRings8()
+    {
+        std::printf ("ring geometry, 8x8\n");
+
+        check (go::ringCount (8) == 4, "8x8 has four rings, and leaves nothing out");
+        check (go::ringCount (9) == 4 && go::ringCount (13) == 6 && go::ringCount (19) == 9,
+               "and the odd boards count exactly as they counted before");
+        check (go::maxRings == 9, "storage is still sized for the biggest board");
+
+        check (go::ringLength (8, 0) == 28 && go::ringLength (8, 1) == 20
+                 && go::ringLength (8, 2) == 12 && go::ringLength (8, 3) == 4,
+               "8x8 rings run 28, 20, 12, 4 - a 7:5:3:1 polyrhythm");
+
+        std::array<int, go::maxCells> order {};
+        const int count = go::spiralOrder (8, order);
+
+        std::array<int, go::maxCells> seen {};
+        int total = 0;
+        bool offsetsChain = true, depthMatches = true;
+
+        for (int r = 0; r < go::ringCount (8); ++r)
+        {
+            if (go::ringOffset (8, r) != total)
+                offsetsChain = false;
+
+            for (int i = 0; i < go::ringLength (8, r); ++i)
+            {
+                const int idx = order[(size_t) (go::ringOffset (8, r) + i)];
+                const int col = go::colOf (idx, 8), row = go::rowOf (idx, 8);
+                const int depth = std::min (std::min (col, row), std::min (7 - col, 7 - row));
+
+                if (depth != r)
+                    depthMatches = false;
+
+                ++seen[(size_t) idx];
+            }
+
+            total += go::ringLength (8, r);
+        }
+
+        check (offsetsChain, "each ring starts where the one before it ended");
+        check (depthMatches, "every point of ring r sits r steps in from the edge");
+        check (total == count, "the rings cover the whole board - there is no tengen left over");
+        check (go::ringOffset (8, go::ringCount (8)) == 64,
+               "and the innermost ring ends on the last point of the spiral");
+
+        bool coverage = true;
+
+        for (int i = 0; i < count; ++i)
+            if (seen[(size_t) i] != 1) coverage = false;
+
+        check (coverage, "no point is on two rings, and none is on none");
+    }
+
+    void testQuads8()
+    {
+        std::printf ("quadrant spirals, 8x8\n");
+
+        check (go::quadSide (8) == 4 && go::quadSteps (8) == 16,
+               "8x8 gives four 4x4 quadrants of 16 points");
+        check (2 * go::quadSide (8) == 8, "two quadrants span the board, sharing nothing");
+
+        check (go::quadOriginCol (8, 0) == 0 && go::quadOriginRow (8, 0) == 0, "the top left block starts at the corner");
+        check (go::quadOriginCol (8, 1) == 4 && go::quadOriginRow (8, 1) == 0, "the top right one half way across");
+        check (go::quadOriginCol (8, 2) == 4 && go::quadOriginRow (8, 2) == 4, "the bottom right one half way down as well");
+        check (go::quadOriginCol (8, 3) == 0 && go::quadOriginRow (8, 3) == 4, "and the bottom left one below the first");
+
+        //  the rewrite that made the line above work must not have moved the odd
+        //  boards, where the blocks do share a middle line
+        bool oddOriginsHeld = true;
+
+        for (int size : { 9, 13, 19 })
+            if (go::quadOriginCol (size, 1) != go::quadSide (size) - 1
+                 || go::quadOriginRow (size, 2) != go::quadSide (size) - 1)
+                oddOriginsHeld = false;
+
+        check (oddOriginsHeld, "and the odd boards' blocks still meet on their middle line");
+
+        std::array<int, go::maxCells> order {};
+        std::array<int, go::maxCells> seen {};
+        bool inRange = true;
+
+        for (int q = 0; q < go::quadCount; ++q)
+        {
+            const int n = go::quadOrder (8, q, order);
+
+            if (n != go::quadSteps (8))
+                inRange = false;
+
+            for (int i = 0; i < n; ++i)
+            {
+                if (order[(size_t) i] < 0 || order[(size_t) i] >= 64) inRange = false;
+                else ++seen[(size_t) order[(size_t) i]];
+            }
+        }
+
+        check (inRange, "each block walks its sixteen points, all of them on the board");
+
+        bool tiles = true;
+
+        for (int i = 0; i < 64; ++i)
+            if (seen[(size_t) i] != 1) tiles = false;
+
+        check (tiles, "and the four of them tile the board: every point is played once a lap");
+    }
+
+    void testStarPoints8()
+    {
+        std::printf ("star points, 8x8\n");
+
+        const auto stars = go::starPoints (8);
+
+        check (stars[0] == ix8 (2, 2) && stars[1] == ix8 (5, 2)
+                 && stars[2] == ix8 (2, 5) && stars[3] == ix8 (5, 5),
+               "the four 3-3 points");
+        check (stars[4] == -1, "and no tengen: nothing sits in the middle of an even board");
+
+        std::array<int, go::maxHoshi> dots {};
+
+        check (go::hoshiPoints (8, dots) == 4, "so a goban marks four points on it");
+        check (go::hoshiPoints (9, dots) == 5 && go::hoshiPoints (13, dots) == 5,
+               "while the small odd boards still mark five");
+        check (go::hoshiPoints (19, dots) == 9, "and a 19x19 still marks nine");
+    }
+
+    void testCapture8()
+    {
+        std::printf ("the rules on an 8x8\n");
+
+        go::Board b (8);
+        b.play (ix8 (0, 0), Stone::white, false, true);
+        b.play (ix8 (1, 0), Stone::black, false, true);
+
+        check (b.stoneCount() == 2, "two stones down in the corner");
+        check (b.play (ix8 (0, 1), Stone::black, false, true) == MoveResult::ok,
+               "black fills the last liberty");
+        check (b.at (ix8 (0, 0)) == Stone::none, "the white stone is lifted");
+        check (b.capturedWhite() == 1, "one white prisoner counted");
+
+        //  the far corner too, since an even board's edges are new ground
+        go::Board c (8);
+        c.play (ix8 (7, 7), Stone::white, false, true);
+        c.play (ix8 (6, 7), Stone::black, false, true);
+        c.play (ix8 (7, 6), Stone::black, false, true);
+
+        check (c.at (ix8 (7, 7)) == Stone::none, "and the opposite corner behaves the same way");
+    }
+
+    void testAi8x8()
+    {
+        std::printf ("self-play on an 8x8\n");
+
+        const auto& book = goai::openingMoves (8);
+
+        check (book.size() == (size_t) goai::openingLength, "the 8x8 has an opening book of its own");
+        check (&book != &goai::openingMoves (9), "and it is not the 9x9's borrowed");
+
+        bool inRange = true, distinct = true;
+
+        for (size_t i = 0; i < book.size(); ++i)
+        {
+            if (book[i].first < 0 || book[i].first > 7 || book[i].second < 0 || book[i].second > 7)
+                inRange = false;
+
+            for (size_t j = i + 1; j < book.size(); ++j)
+                if (book[i] == book[j])
+                    distinct = false;
+        }
+
+        check (inRange, "every book point is on the board");
+        check (distinct, "and no point is played twice");
+
+        go::Board opening (8);
+        bool bookIsLegal = true;
+
+        for (size_t i = 0; i < book.size(); ++i)
+        {
+            const auto colour = (i % 2 == 0) ? Stone::black : Stone::white;
+
+            if (opening.play (go::index (book[i].first, book[i].second, 8), colour, false, true) != MoveResult::ok)
+                bookIsLegal = false;
+        }
+
+        check (bookIsLegal, "and the ten of them play out legally from an empty board");
+
+        bool legal = true, alive = true, opens = true;
+
+        for (int seed = 1; seed <= 5; ++seed)
+        {
+            const auto game = goai::generate (aiSettings (8, 60, 35, (std::uint32_t) seed * 7919u));
+
+            if (game.size != 8 || game.moveCount() != 60) opens = false;
+            if (refusedMoves (game) != 0) legal = false;
+
+            go::Board board (8);
+
+            for (const auto& move : game.moves)
+                board.play (move.index, move.colour, false, true);
+
+            if (board.stoneCount() < 8) alive = false;
+
+            for (int i = 0; i < goai::openingLength; ++i)
+                if (game.moves[(size_t) i].index != go::index (book[(size_t) i].first, book[(size_t) i].second, 8))
+                    opens = false;
+        }
+
+        check (opens, "every 8x8 game is sixty moves long and opens on the book");
+        check (legal, "every move of them is legal");
+        check (alive, "and the board does not dissolve");
+
+        const auto a = goai::generate (aiSettings (8, 60, 50, 4242u));
+        const auto b = goai::generate (aiSettings (8, 60, 50, 4242u));
+        const auto c = goai::generate (aiSettings (8, 60, 50, 4243u));
+
+        bool same = a.moveCount() == b.moveCount();
+
+        for (int i = 0; same && i < a.moveCount(); ++i)
+            same = a.moves[(size_t) i].index == b.moves[(size_t) i].index;
+
+        check (same, "one seed names one game, here as anywhere");
+
+        bool diverges = false;
+
+        for (int i = goai::openingLength; i < std::min (a.moveCount(), c.moveCount()); ++i)
+            if (a.moves[(size_t) i].index != c.moves[(size_t) i].index)
+                diverges = true;
+
+        check (diverges, "and another seed plays a different one after the book runs out");
+
+        const auto reading = goai::generate (aiSettings (8, 60, 35, 11u, goai::Players::reading));
+
+        check (reading.moveCount() == 60 && refusedMoves (reading) == 0,
+               "the reading players manage an 8x8 as well");
     }
 
     //==============================================================================
@@ -1410,6 +1725,15 @@ int main (int argc, char** argv)
     testAiCustomOpening();
     testAiFullBoard();
     testAiSwapIsAllocationFree();
+
+    testSize8();
+    testSpiral8();
+    testRings8();
+    testQuads8();
+    testStarPoints8();
+    testCapture8();
+    testAi8x8();
+
     testAiClassicUnchanged();
 
     testTacticsMoveFacts();
