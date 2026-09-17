@@ -970,6 +970,28 @@ namespace gosearch
         return std::clamp (1000000 / microsecondsPerPlayout (size), 1000, 50000);
     }
 
+    /** Roughly the kyu rank a pair answers at in a match, for the editor to show
+        beside Variation. 21 stands for weaker than 20 kyu.
+
+        Measured offline (tools/katagorank/rank.py): the match opponents at
+        Variation 35 against KataGo's human SL network imitating players of each
+        rank, twelve games a rank - Search came out near 5k on 8x8, 8k on 9x9,
+        12k on 13x13 and 14k on 19x19; Reading and Classic lost nearly every game
+        to 20k on every board. The slope over Variation is an estimate, not a
+        measurement: on the 8x8 KataGo loss table, 0 to 100 costs Search about
+        0.1-0.2 points a move, put here at three ranks - one stronger at 0, two
+        weaker at 100. Nothing below looks at this; it is a label. */
+    inline int estimatedKyu (goai::Players players, int size, int variation) noexcept
+    {
+        if (players != goai::Players::search)
+            return 21;
+
+        const int atThirtyFive = size == 8 ? 5 : size == 9 ? 8 : size == 13 ? 12 : 14;
+
+        //  -1 up to 17, 0 up to 52, +1 up to 87, +2 above
+        return std::clamp (atThirtyFive + (std::clamp (variation, 0, 100) + 52) / 35 - 2, 1, 21);
+    }
+
     /** A whole self-play game, the shape goai::generate writes: the same opening,
         the same seeds, the search player on both sides. Passes are recorded; two
         in a row end the game. `keepGoing` is asked between moves, so a game

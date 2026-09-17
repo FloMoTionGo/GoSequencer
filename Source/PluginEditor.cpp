@@ -1464,6 +1464,21 @@ void GoSequencerEditor::timerCallback()
         refreshMatchDisplay();
     }
 
+    {
+        //  roughly how strong they answer in a match (gosearch::estimatedKyu):
+        //  three small numbers, compared as one before any text is built
+        const auto players = (goai::Players) processor.apvts.getRawParameterValue ("aiPlayers")->load();
+        const int variation = (int) processor.apvts.getRawParameterValue ("aiVariation")->load();
+        const int kyu = gosearch::estimatedKyu (players, processor.boardSize(), variation);
+
+        if (kyu != lastRankShown)
+        {
+            lastRankShown = kyu;
+            aiVariationCaption.setText (kyu > 20 ? "VARIATION  <20 KYU" : "VARIATION  ~" + juce::String (kyu) + " KYU",
+                                        juce::dontSendNotification);
+        }
+    }
+
     if (ai != lastAiShown || aiGame != lastAiGameShown)
     {
         lastAiShown = ai;

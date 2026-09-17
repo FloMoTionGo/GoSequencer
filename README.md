@@ -27,6 +27,9 @@ overview.
 > neural-network program, but it only marked moves on the development machine:
 > it is not in the plugin, never plays in it, and what came out is a set of
 > fixed numbers. See [The 8×8 weights (KataGo)](#the-88-weights-katago).
+> KataGo's human SL network (`b18c384nbt-humanv0`), which imitates players of a
+> given rank, was also the offline opponent for the rank shown beside
+> **Variation** — see [How strong, in kyu](#how-strong-in-kyu).
 >
 > **Credit — Monte Carlo tree search.** The *search* players play games out to
 > choose a move, using published algorithms: Monte Carlo tree search (Rémi
@@ -48,6 +51,7 @@ overview.
 - [Where the reading players come from (Leela)](#where-the-reading-players-come-from-leela)
   - [The 8×8 weights (KataGo)](#the-88-weights-katago)
 - [The search players](#the-search-players)
+  - [How strong, in kyu](#how-strong-in-kyu)
 - [Playing against the AI](#playing-against-the-ai)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
   - [One track per channel: the MIDI out port (needs loopMIDI)](#one-track-per-channel-the-midi-out-port-needs-loopmidi)
@@ -118,8 +122,8 @@ rather than resetting the whole board's clock.
 | **Spread** | Semitone transpose per ring (Polyrhythm). |
 | **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
 | **AI Self-Play** | Two built-in players write the record instead of loading one — see below. |
-| **Players** | *Reading* (the default) or *Classic* — which generation of the two players writes the games. |
-| **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
+| **Players** | *Reading* (the default), *Classic* or *Search* — which generation of the two players writes the games. |
+| **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move (with a rough rank beside it — see [How strong, in kyu](#how-strong-in-kyu)), and which run of games you get. |
 | **From board** / **Use book** | Take the ten stones you played as the opening every game starts from, or go back to the built-in one. |
 | **Play against** / **They play** | The players answer your moves one at a time instead of writing whole games; choose their colour. **Pass** and **New game** go with it. |
 | **Launchpad in** / **out** | Drive a Launchpad X, whose pads show and play the board. **Find Launchpad** picks both ports — see [Launchpad X](#launchpad-x). |
@@ -410,8 +414,43 @@ uses:
 Judged move by move by KataGo on the 8×8 positions held out from the weight
 tuning, the points a player gives away per move fall from 3.75 (reading players'
 best move) to 2.99 with the self-play budget and 2.81 with the match budget. That
-is a large step for these players and still far from strong play: no rank has
-been measured, so none is claimed.
+is a large step for these players and still far from strong play.
+
+### How strong, in kyu
+
+The AI tab shows a rough rank beside **Variation** — "~8 KYU" — for the players,
+board and variation that are set. It is how strong they *answer in a match*
+(about a second a move); a self-play game gets less time per move and plays
+somewhat weaker.
+
+**Measured.** The match opponents played KataGo imitating human players of a
+given rank: KataGo's human SL network (`b18c384nbt-humanv0`, trained on human
+games labelled by rank) chose its moves, KataGo's normal network only when to pass
+or resign. Rules as the plugin's defaults, komi 7.5, colours alternating, twelve
+games per rank, KataGo counting the result; the rank where a player wins half is
+read off a curve fitted to all the games. All at variation 35. This ran offline on
+the development machine; nothing of it is in the plugin.
+
+| Board | Search | Games won, by opponent rank |
+|---|---|---|
+| 8×8 | about 5 kyu or stronger | 20k 12/12 · 15k 10/12 · 10k 8/12 · 5k 7/12 |
+| 9×9 | about 8 kyu | 20k 11/12 · 15k 10/12 · 10k 6/12 · 8k 9/12 · 7k 5/12 · 5k 3/12 |
+| 13×13 | about 12 kyu | 20k 12/12 · 15k 7/12 · 13k 9/12 · 12k 5/12 · 10k 4/12 |
+| 19×19 | about 14 kyu | 20k 11/12 · 15k 7/12 |
+
+The reading and classic players lost nearly every game to 20 kyu on every board
+(the reading players won 3 of 48 games, the classic players none of those
+played on 9×9, 13×13 and 19×19), so they are shown as "<20 KYU"; KataGo's
+imitation goes no lower than 20 kyu, so how far below is not known.
+
+**Estimated.** How the rank moves with **Variation** was not played out. On the
+8×8 KataGo loss table, going from variation 0 to 100 costs the search players
+about 0.1–0.2 points a move; the label puts that at three ranks — one stronger at
+0, two weaker at 100.
+
+**How far to trust it.** Twelve games a rank gives a figure good to two or three
+ranks either way. The human network learned mostly from 19×19 games, so 9×9 and
+13×13 are rougher and 8×8 is the roughest; 19×19 and 8×8 were also stopped early.
 
 ## Playing against the AI
 

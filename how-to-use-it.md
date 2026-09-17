@@ -395,6 +395,11 @@ for the longest, 160 moves on a 19×19.
   one game repeating — a strict loop. At **100%** they pick freely among their
   best twelve, which gets loose and takes fewer stones. **35%**, the default,
   keeps the play recognisable and makes every game different by around move 11.
+  Beside the caption is a rough rank for the players and board that are set —
+  "~8 KYU" for the search players on 9×9 at 35%, "<20 KYU" for the reading and
+  classic players. It was measured against KataGo imitating human players and
+  is how strong they answer in a match; see the README's
+  [How strong, in kyu](README.md#how-strong-in-kyu).
 - **Seed** — names the run. The same seed plays the same games in the same
   order, on any machine and in any host — for the same **Players**: the two
   generations play different games from one seed.

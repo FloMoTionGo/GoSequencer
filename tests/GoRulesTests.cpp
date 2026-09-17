@@ -1841,6 +1841,28 @@ namespace
         //  no-op cannot slip by - and so two compilers are held to one answer.
         std::printf ("search: pinned\n");
         check (hashChoices (a) == 0xb08fa946u, "800 playouts on a 9x9 after the book, move for move");
+
+        //  the label beside Variation: the measured ranks at 35, stronger at 0,
+        //  weaker at 100, and never a rank for the pairs that lost to 20k
+        std::printf ("search: estimated rank\n");
+        using goai::Players;
+        check (gosearch::estimatedKyu (Players::search, 8, 35) == 5
+                && gosearch::estimatedKyu (Players::search, 9, 35) == 8
+                && gosearch::estimatedKyu (Players::search, 13, 35) == 12
+                && gosearch::estimatedKyu (Players::search, 19, 35) == 14, "the measured ranks at 35");
+        check (gosearch::estimatedKyu (Players::search, 9, 0) == 7
+                && gosearch::estimatedKyu (Players::search, 9, 100) == 10, "one stronger at 0, two weaker at 100");
+
+        bool monotonic = true;
+
+        for (int size : { 8, 9, 13, 19 })
+            for (int v = 1; v <= 100; ++v)
+                monotonic = monotonic && gosearch::estimatedKyu (Players::search, size, v)
+                                      >= gosearch::estimatedKyu (Players::search, size, v - 1);
+
+        check (monotonic, "more variation is never a stronger rank");
+        check (gosearch::estimatedKyu (Players::reading, 9, 0) == 21
+                && gosearch::estimatedKyu (Players::classic, 19, 35) == 21, "reading and classic: weaker than 20k");
     }
 }
 

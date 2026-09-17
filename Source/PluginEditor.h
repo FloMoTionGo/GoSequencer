@@ -205,6 +205,9 @@ private:
     bool lastThinkingShown = false;
     int lastAiGameShown = -1;
 
+    /** The rank beside Variation follows the pair, the board and the slider. */
+    int lastRankShown = -1;
+
     /** The opening line, and the enables that go with it - re-read when the
         count of hand-played stones or the opening itself changes. */
     void refreshOpeningDisplay();
