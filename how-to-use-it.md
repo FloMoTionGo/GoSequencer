@@ -28,20 +28,24 @@ deeper into *how* and *why* each feature behaves the way it does.
    - [AI self-play](#ai-self-play)
    - [The players, and what Leela gave them](#the-players-and-what-leela-gave-them)
    - [Wave Replay](#wave-replay)
+   - [Playing against the AI](#playing-against-the-ai)
 7. [Playhead modes explained in depth](#7-playhead-modes-explained-in-depth)
 8. [Stone lifespan in depth](#8-stone-lifespan-in-depth)
 9. [Go rules reference](#9-go-rules-reference)
 10. [Routing MIDI out (Ableton Live and others)](#10-routing-midi-out-ableton-live-and-others)
     - [One track per channel: the MIDI out port (needs loopMIDI)](#one-track-per-channel-the-midi-out-port-needs-loopmidi)
-11. [Saving and recalling sessions](#11-saving-and-recalling-sessions)
-12. [Building it from source](#12-building-it-from-source)
+11. [The Launchpad X (the Pads tab)](#11-the-launchpad-x-the-pads-tab)
+    - [Connecting it](#connecting-it)
+    - [What the pads and buttons do](#what-the-pads-and-buttons-do)
+12. [Saving and recalling sessions](#12-saving-and-recalling-sessions)
+13. [Building it from source](#13-building-it-from-source)
     - [Requirements](#requirements)
     - [Windows](#windows)
     - [macOS / Linux](#macos--linux)
     - [Running the rules-engine tests](#running-the-rules-engine-tests)
     - [Troubleshooting the build](#troubleshooting-the-build)
-13. [Installing the built plugin](#13-installing-the-built-plugin)
-14. [Project layout reference](#14-project-layout-reference)
+14. [Installing the built plugin](#14-installing-the-built-plugin)
+15. [Project layout reference](#15-project-layout-reference)
 
 ---
 
@@ -63,7 +67,7 @@ On the right, top to bottom:
 - A **header**: the plugin name, a small stone swatch showing the colour the
   *next* click will place, and under it a status line (step count, capture
   tally, transport state).
-- A row of five **tabs**, and under it the controls of the open one:
+- A row of six **tabs**, and under it the controls of the open one:
   - **Sequencer** — step rate, note, gate, playhead mode, stone life, free
     run and spread.
   - **Board** — the rule switches, Show path, Clear board, and a reminder of
@@ -71,7 +75,10 @@ On the right, top to bottom:
   - **Channels** — both velocities, every MIDI channel assignment, and the
     optional MIDI out port.
   - **Game** — loading, running and scrubbing an SGF record, and Wave Replay.
-  - **AI** — self-play and the opening it starts from.
+  - **AI** — self-play and the opening it starts from, and playing a game
+    against the players.
+  - **Pads** — connecting a Launchpad X, whose pads then show and play the
+    board.
 
 Only one tab is shown at a time and every tab takes the same space, so
 switching never resizes the window; the tab you left open is saved with the
@@ -162,11 +169,14 @@ does.
 
 These two sit under the board, not on a tab.
 
-- **Board** — `9 x 9`, `13 x 13` or `19 x 19`. **Changing this clears the
-  board** — the sizes address different points, so nothing to carry over.
-  The full 19×19 board draws all nine star points and runs its coordinates
-  out to `T`; a one-lap Spiral on it is 361 steps, so it suits the faster
-  step rates or Polyrhythm/Quads.
+- **Board** — `9 x 9`, `13 x 13`, `19 x 19` or `8 x 8`. **Changing this
+  clears the board** — the sizes address different points, so nothing to
+  carry over. The full 19×19 board draws all nine star points and runs its
+  coordinates out to `T`; a one-lap Spiral on it is 361 steps, so it suits
+  the faster step rates or Polyrhythm/Quads. The 8×8 comes last in the list
+  because it was added last: it's the size of a Launchpad X's grid (see
+  [§11](#11-the-launchpad-x-the-pads-tab)), and the only board with an even
+  side — so it has no tengen, and four star points rather than five.
 - **Place** — who a left-click on an empty point plays next: `Alternate`
   (black/white swap each move, as in a real game), `Black` (always plays
   black), or `White` (always plays white). The header swatch always shows
@@ -501,6 +511,34 @@ Three things follow from that:
 With Wave Replay **off**, Loop behaves as it always has: the board is wiped
 and the record replays from move 0.
 
+### Playing against the AI
+
+The same players can answer your moves one at a time instead of writing whole
+games — on the screen, or on a [Launchpad](#11-the-launchpad-x-the-pads-tab).
+
+- **Play against** (at the bottom of the AI tab) starts a game on an empty
+  board. A game owns the board, so AI self-play and **Run game** switch off
+  and a loaded record is unloaded — and loading a record or starting
+  self-play ends the game in turn.
+- **They play** is their colour: *White* (the default — you open) or *Black*
+  (they open). Changing it during a game starts the game again.
+- Place a stone and their answer lands straight after it. They play with the
+  **Players** and **Variation** set above, and their answers follow from the
+  **Seed** — play the same moves and you get the same replies.
+- **The colours simply alternate** — **Place** doesn't apply during a game —
+  and the board won't take a stone while it's their move.
+- **Stones can't be lifted during a game.** The position is the record of the
+  game, and taking a move back out of it would make it a different game.
+- **Pass** hands them the move. If they find nothing worth playing they pass
+  too, and two passes in a row end the game. The line under the buttons says
+  whose move it is and, once it's over, how many stones each side captured.
+  There's no scoring.
+- **New game** empties the board and starts again.
+
+The board is the sequencer's pattern the whole time, so a game against them
+is just another way of writing one. Its first ten moves can become the
+self-play opening with **From board**, like any ten you played.
+
 ## 7. Playhead modes explained in depth
 
 Set with **Mode**. A "playhead" is an invisible marker stepping through
@@ -530,6 +568,11 @@ no single centre point, so each spiral winds in to the square of four points
 in the middle of its corner — the 5-5 to 6-6 points — and the 4-4 star point
 sits on the ring just outside that.
 
+An **8×8** has no middle row or column to share: its four 4×4 blocks sit side
+by side and tile the board, so every point is played exactly once a lap and
+the four heads never meet. Like the 19×19's, each block's spiral ends on the
+square of four points in its middle.
+
 - **Quads out**: each playhead starts at the middle of its block (the star
   point, on 9×9 and 13×13) and spirals *outward* toward the block's edges.
 - **Quads in**: each playhead starts at the block's outer edge and spirals
@@ -546,12 +589,15 @@ Routing is **by playhead** (Head 1–4 Channel).
 One playhead per **concentric ring** of the board (tengen is excluded — it
 has nowhere to rotate to). A 9×9 board has 4 rings (32, 24, 16, 8 points
 around); a 13×13 has 6 rings (48, 40, 32, 24, 16, 8 points); a 19×19 has 9
-rings (72, 64, 56, 48, 40, 32, 24, 16, 8 points).
+rings (72, 64, 56, 48, 40, 32, 24, 16, 8 points). An 8×8 has 4 rings too
+(28, 20, 12, 4 points) and leaves nothing out: an even board has no tengen,
+and its innermost ring is the square of four points in the middle.
 
 Every ring shares the same step clock, but because the rings have
 different lengths, they drift in and out of phase with each other — they
 only all land back at their starting point together every 96 steps on a
-9×9 (480 on a 13×13, and 20,160 on a 19×19 — at 1/16 and 120 BPM, exactly
+9×9 (420 on an 8×8, 480 on a 13×13, and 20,160 on a 19×19 — at 1/16 and
+120 BPM, exactly
 42 minutes). Each ring has its own **channel** and its own
 **pitch transpose** (Spread), and — critically — **all rings sound
 together**, so a fully-populated board plays as an evolving chord rather
@@ -726,14 +772,106 @@ Worth knowing:
 - **Other hosts** that keep channels on their own routing (Bitwig, Reaper) don't
   need any of this — leave the port *Off* there.
 
-## 11. Saving and recalling sessions
+## 11. The Launchpad X (the Pads tab)
+
+A Novation **Launchpad X** can stand in for the board. Its 8×8 grid of pads
+shows the stones and the playheads, a press on a pad plays a stone, and the
+buttons round the edge drive the sequencer — so you can play the pattern, or a
+game against the players, without touching the mouse.
+
+Nothing is set up on the Launchpad itself: no Custom Mode, no Novation
+Components. Go Sequencer switches the Launchpad into its **Programmer Mode**
+when it takes it over, and back to normal when it lets go.
+
+**The board has to be 8×8** — the size of the grid. On any bigger board the
+pads stay dark rather than show a corner of it; the buttons round the edge
+still work.
+
+### Connecting it
+
+1. **Keep Live off the Launchpad.** Its Launchpad X script would take the
+   device back out of Programmer Mode, a track listening to it would play your
+   presses as notes, and on some Windows setups a port can only be used by one
+   program at a time. In Live's *Settings → Link, Tempo & MIDI*, set the
+   Launchpad X **Control Surface** to *None*, and switch **Track**, **Sync** and
+   **Remote** off for all of the Launchpad's ports. In the Standalone app, leave
+   them unticked under *Options → Audio/MIDI Settings*.
+2. **Open the Pads tab and press Find Launchpad.** It picks the ports the grid
+   talks on — on Windows, `MIDIIN2 (LPX MIDI)` and `MIDIOUT2 (LPX MIDI)`.
+   Windows also lists a plain `LPX MIDI` pair above them: that's the
+   Launchpad's DAW port, and the pads don't work on it. The two dropdowns
+   choose ports by hand.
+3. **The board becomes 8×8.** On an empty board that happens straight away. If
+   there are stones on it or a game record loaded, nothing is thrown away until
+   you press **Use 8 x 8** — changing size clears the board.
+4. The status line reads *driving MIDIOUT2 (LPX MIDI)*, and the pads light up.
+
+**Stop** gives the Launchpad back: its lights go out and it returns to its own
+modes.
+
+### What the pads and buttons do
+
+The names printed on the edge buttons are Novation's, not Go Sequencer's. This
+is what they do here — the Pads tab draws the Launchpad with the same jobs
+written beside its buttons.
+
+| Button | What it does |
+|---|---|
+| **Pads** | Press an empty point to place a stone — the colour **Place** says, just as a click would. Press a stone to lift it (not during a game against the players). |
+| **Up** / **Down** arrows | Step rate faster / slower |
+| **Left** / **Right** arrows | One move back / on in the loaded game |
+| **Session** | Run game on / off |
+| **Note** | Free run on / off |
+| **Custom** | Cycle **Place**: Alternate → Black → White |
+| **Capture MIDI** | Hold for a moment to clear the board — or, in a game against the players, to start a new one |
+| Right column, 1st from the top | Play against the players on / off |
+| 2nd | Pass |
+| 3rd | Lift the last stone played |
+| 4th | Loop on / off |
+| 5th | Wave Replay on / off |
+| 6th | Move rate faster |
+| 7th | Move rate slower |
+| 8th (bottom) | Redraw: set the Launchpad up again and resend every light |
+
+What the lights mean:
+
+- **Stones:** black stones are **blue** and white stones **white**. A stone
+  whose life has run out is dimmer, as it's faded on the screen.
+- **Star points** glow faintly, so you can find your way around.
+- **Playheads**, while the sequencer runs: faint **orange** on an empty point,
+  and on a stone a lighter **blue** (black) or **yellow** (white), so you can
+  still tell which stone it's on. Every playhead of Polyrhythm and Quads is
+  shown.
+- **A refused move** — against the rules, or not your turn — flashes **red**.
+- **Round the edge**, a switch that's on is **green**, and a button with nothing
+  to do right now (no record to step through, not your move to pass) is dark.
+
+Worth knowing:
+
+- **While Go Sequencer has it, the Launchpad's own settings are locked** —
+  holding **Session** doesn't open its menu. That's how a Launchpad behaves
+  when software is in charge. Press **Stop**, or close Go Sequencer, and it's
+  back to normal. If Go Sequencer ever crashes and leaves it stuck, unplugging
+  the Launchpad and plugging it back in should reset it.
+- **The ports are saved with the set**, by name. Opening a set reconnects to
+  the Launchpad, but never changes the board's size by itself.
+- **"busy"** in the status line means another program has the port — usually
+  Live (step 1), or a second Go Sequencer. Even where Windows lets two programs
+  share it, two Go Sequencers on one Launchpad would fight over its lights.
+- **Not found at all?** Check the cable. On some Windows setups Novation's own
+  USB driver doesn't publish the MIDI ports; switching the Launchpad to the
+  standard Windows (class-compliant) driver and reconnecting it fixes that.
+
+## 12. Saving and recalling sessions
 
 Every control here is a JUCE `AudioProcessorValueTreeState` parameter, so
 your host's normal plugin-state saving covers all of it automatically: the
 board (which stones are placed), rate/note/gate, mode, all channel
 assignments, rule switches, which tab was left open, the **MIDI out port**
 (by name — see [§10](#one-track-per-channel-the-midi-out-port-needs-loopmidi)),
-and — separately — the loaded game record and its current scrub position.
+the **Launchpad**'s two ports (by name — see [§11](#11-the-launchpad-x-the-pads-tab)),
+a game against the players — whose move it is, and a pass that still stands —
+and, separately, the loaded game record and its current scrub position.
 Saving your DAW project (or a plugin preset, if your host supports them)
 recalls the sequencer exactly as you left it, board included.
 
@@ -746,7 +884,7 @@ because the players are exactly reproducible; see [AI self-play](#ai-self-play).
 A session saved before there was a **Players** choice comes back with the
 *Classic* pair, because those are the players whose games it saved.
 
-## 12. Building it from source
+## 13. Building it from source
 
 ### Requirements
 
@@ -828,43 +966,49 @@ ctest --test-dir build -C Release --output-on-failure
   with the MSVC generator (Visual Studio 17 2022), not Ninja/MinGW, or
   adjust that setting in `CMakeLists.txt` to match your toolchain.
 - **DAW doesn't see the plugin after building** — you built it but didn't
-  copy/install it; see [§13](#13-installing-the-built-plugin) below, or
+  copy/install it; see [§14](#14-installing-the-built-plugin) below, or
   just re-run `.\build.ps1 -Install`.
 - **Rescan needed** — after installing, most hosts need a manual
   plugin rescan (Live: Preferences → Plug-Ins → Rescan).
 
-## 13. Installing the built plugin
+## 14. Installing the built plugin
 
 Build artefacts land under `build/GoSequencer_artefacts/<Config>/`:
 
-- `VST3/Go Sequencer.vst3` — copy (or let `build.ps1 -Install` copy) into:
+- `VST3/GoSequencer.vst3` — copy (or let `build.ps1 -Install` copy) into:
   - Windows: `C:\Program Files\Common Files\VST3\`
   - macOS: `~/Library/Audio/Plug-Ins/VST3/`
   - Linux: `~/.vst3/`
+- `Standalone/GoSequencer.exe` — the same plugin as an application of its
+  own. Nothing to install: run it from there. It's the quickest way to try a
+  [Launchpad](#11-the-launchpad-x-the-pads-tab) without opening a DAW.
 
 After copying a new VST3 build over an existing one, rescan plugins in
 your DAW (most hosts cache their plugin list).
 
-## 14. Project layout reference
+## 15. Project layout reference
 
 ```
 GoSequencer/
-├── CMakeLists.txt          # Build configuration (JUCE plugin + rules tests)
+├── CMakeLists.txt          # Build configuration (JUCE plugin as VST3 + Standalone, rules tests)
 ├── build.ps1                # Windows one-shot configure/build/test/install script
 ├── Source/
 │   ├── PluginProcessor.*   # Audio/MIDI engine: playheads, clock, params, state
 │   ├── PluginEditor.*      # Plugin UI: all sliders/combos/buttons, board layout
 │   ├── BoardComponent.*    # The clickable Go board widget and its painting
 │   ├── MidiPortOut.*       # The optional MIDI out port: notes to a system port, channels intact
+│   ├── LaunchpadSurface.*  # The Launchpad X: its pads show and play the board, its edge drives the sequencer
+│   ├── LaunchpadMap.h      # Which pad is which point (no JUCE deps, unit-tested)
 │   ├── GoAI.h              # The self-play players, classic and reading (no JUCE deps, no floats)
 │   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE deps)
 │   └── SgfParser.h         # Minimal SGF (game record) reader
+├── claude_instructions/    # Architecture notes for AI coding agents, and the Launchpad X protocol
 ├── sgf/                    # Sample game records for trying SGF playback
 ├── tools/
 │   └── GoAiDump.cpp        # Runs the two players outside the plugin, writes .sgf
 └── tests/
-    └── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
+    └── GoRulesTests.cpp    # Rules, self-play and pad-mapping tests, run via ctest
 ```
 
 For a shorter overview, see [README.md](README.md).

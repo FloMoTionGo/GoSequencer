@@ -30,8 +30,10 @@ overview.
 - [Loading a game record (SGF)](#loading-a-game-record-sgf)
 - [AI self-play](#ai-self-play)
 - [Where the reading players come from (Leela)](#where-the-reading-players-come-from-leela)
+- [Playing against the AI](#playing-against-the-ai)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
   - [One track per channel: the MIDI out port (needs loopMIDI)](#one-track-per-channel-the-midi-out-port-needs-loopmidi)
+- [Launchpad X](#launchpad-x)
 - [Building it](#building-it)
   - [Requirements](#requirements)
   - [Windows (MSVC + CMake)](#windows-msvc--cmake)
@@ -41,7 +43,7 @@ overview.
 
 ## How it works
 
-The board is a real Go board — 9×9, 13×13 or 19×19 — and clicking on it plays a
+The board is a real Go board — 9×9, 13×13, 19×19 or 8×8 — and clicking on it plays a
 stone under real Go rules: captures, suicide, and the ko rule all apply (the
 last two can be switched off). Nothing about the *sound* depends on
 understanding Go, though; you can just click points and listen.
@@ -59,8 +61,8 @@ Set with the **Mode** control:
 | Mode | Playheads | Path |
 |---|---|---|
 | **Spiral** | 1 | Clockwise from the top-left corner, winding inward to *tengen* (centre). Black and white are routed on separate channels. |
-| **Quads out** / **Quads in** | 4 | One playhead per quadrant, each spiralling around that quadrant's star point (the 3-3 point on 9×9, 4-4 on 13×13). On a 19×19 the blocks are 10×10 — an even side, with no single centre — so each spiral winds around the four points just inside the 4-4 star point instead. The four blocks share the middle row/column, so all four heads meet in the centre at once. "Out" winds outward from the middle of the block; "in" winds inward toward it. |
-| **Polyrhythm** | 4 (9×9), 6 (13×13) or 9 (19×19) | One playhead per concentric ring around the board (tengen itself isn't a ring). All heads share the same step clock, but the rings have different lengths — 32/24/16/8 points on a 9×9 — so they drift in and out of phase and only realign every 96 steps (480 on 13×13, 20,160 on 19×19). Every ring has its own MIDI channel and its own pitch transpose, and they all sound together: the board plays as a chord, not a line. |
+| **Quads out** / **Quads in** | 4 | One playhead per quadrant, each spiralling around that quadrant's star point (the 3-3 point on 9×9, 4-4 on 13×13). On a 19×19 the blocks are 10×10 — an even side, with no single centre — so each spiral winds around the four points just inside the 4-4 star point instead. The four blocks share the middle row/column, so all four heads meet in the centre at once — except on an 8×8, whose four 4×4 blocks share no middle and tile the board. "Out" winds outward from the middle of the block; "in" winds inward toward it. |
+| **Polyrhythm** | 4 (8×8 or 9×9), 6 (13×13) or 9 (19×19) | One playhead per concentric ring around the board (tengen itself isn't a ring; an 8×8 has none, so its rings cover every point). All heads share the same step clock, but the rings have different lengths — 32/24/16/8 points on a 9×9 — so they drift in and out of phase and only realign every 96 steps (420 on 8×8, 480 on 13×13, 20,160 on 19×19). Every ring has its own MIDI channel and its own pitch transpose, and they all sound together: the board plays as a chord, not a line. |
 
 ## Stone lifespan
 
@@ -84,7 +86,7 @@ rather than resetting the whole board's clock.
 
 | Control | What it does |
 |---|---|
-| **Board** | 9×9, 13×13 or 19×19. Changing it clears the board. |
+| **Board** | 9×9, 13×13, 19×19 or 8×8 (the size of a Launchpad X's grid). Changing it clears the board. |
 | **Mode** | Spiral / Polyrhythm / Quads out / Quads in — see above. |
 | **Place** | Alternate / Black / White — who a click plays next. |
 | **Rate** | Step clock rate, synced to host tempo (1/1 down to 1/32T). |
@@ -101,6 +103,8 @@ rather than resetting the whole board's clock.
 | **Players** | *Reading* (the default) or *Classic* — which generation of the two players writes the games. |
 | **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
 | **From board** / **Use book** | Take the ten stones you played as the opening every game starts from, or go back to the built-in one. |
+| **Play against** / **They play** | The players answer your moves one at a time instead of writing whole games; choose their colour. **Pass** and **New game** go with it. |
+| **Launchpad in** / **out** | Drive a Launchpad X, whose pads show and play the board. **Find Launchpad** picks both ports — see [Launchpad X](#launchpad-x). |
 | **Ko Rule** | Forbid immediately recapturing the previous position. |
 | **Self Capture** | Allow suicide moves (a group played with zero liberties is removed instead of refused). |
 
@@ -275,6 +279,16 @@ keeping the changes that won (`tools/GoAiTune.cpp`, a local tool like
 `GoAiDump`); after that they were fixed, which is also what keeps every seed
 reproducible.
 
+## Playing against the AI
+
+Switch on **Play against** on the AI tab and the same players answer your
+moves one at a time instead of writing whole games; **They play** picks their
+colour. Their answer lands as soon as you place a stone. **Pass** and **New
+game** do what they say, and two passes in a row end the game. Stones can't be
+lifted during a game, and a game in progress — whose move it is included — is
+saved with the session. More in
+[how-to-use-it.md](how-to-use-it.md#playing-against-the-ai).
+
 ## Using it in Ableton Live
 
 Go Sequencer is a MIDI instrument, so Live treats it like any other note
@@ -315,6 +329,28 @@ Sequencer can send its notes to a port as well as to the host:
 Freeze and Export don't capture the port (they render offline), so record the
 tracks into clips first. The full walkthrough is in
 [how-to-use-it.md](how-to-use-it.md#one-track-per-channel-the-midi-out-port-needs-loopmidi).
+
+## Launchpad X
+
+A Novation **Launchpad X** can be the board. On an **8×8** board — the size of
+its grid — the pads show the stones and the playheads, a press plays a stone,
+and the buttons round the edge run the sequencer: step rate, the loaded game,
+run and free run, playing against the AI, pass, loop and more.
+
+There's nothing to set up on the Launchpad: no Custom Mode, no Novation
+Components. Go Sequencer puts it into Programmer Mode itself and hands it back
+when it lets go.
+
+1. In Live's *Settings → Link, Tempo & MIDI*, set the Launchpad X control
+   surface to *None* and switch Track, Sync and Remote off for the Launchpad's
+   ports, so Live leaves the device to Go Sequencer.
+2. On Go Sequencer's **Pads** tab, press **Find Launchpad**. On Windows it picks
+   `MIDIIN2` / `MIDIOUT2 (LPX MIDI)` — the plain `LPX MIDI` listed beside them is
+   the DAW port, which the pads don't use. The board becomes 8×8 — straight away
+   if it's empty, otherwise when you press **Use 8 x 8**.
+
+The button map and the rest are in
+[how-to-use-it.md](how-to-use-it.md#11-the-launchpad-x-the-pads-tab).
 
 ## Building it
 
@@ -359,7 +395,7 @@ cmake --build build --config Release --target GoSequencer_VST3
 
 Build output lands under `build/GoSequencer_artefacts/Release/`:
 
-- `VST3/Go Sequencer.vst3` — copy to `C:\Program Files\Common Files\VST3\`
+- `VST3/GoSequencer.vst3` — copy to `C:\Program Files\Common Files\VST3\`
   (or your DAW's VST3 folder) to make it visible to your host.
 
 If your JUCE checkout lives somewhere else, point CMake at it instead of
@@ -395,19 +431,22 @@ ctest --test-dir build -C Release --output-on-failure
 
 ```
 GoSequencer/
-├── CMakeLists.txt          # Build configuration (JUCE plugin + rules tests)
+├── CMakeLists.txt          # Build configuration (JUCE plugin as VST3 + Standalone, rules tests)
 ├── Source/
 │   ├── PluginProcessor.*   # Audio/MIDI engine: playheads, clock, params
 │   ├── PluginEditor.*      # Plugin UI (sliders, combo boxes, board view)
 │   ├── BoardComponent.*    # The clickable Go board widget
 │   ├── MidiPortOut.*       # The optional MIDI out port: notes to a system port, channels intact
+│   ├── LaunchpadSurface.*  # The Launchpad X: its pads show and play the board
+│   ├── LaunchpadMap.h      # Which pad is which point (no JUCE)
 │   ├── GoBoard.h           # Standalone Go/Baduk rules engine (no JUCE)
 │   ├── GoAI.h              # The self-play players, classic and reading (no JUCE, no floats)
 │   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas
 │   └── SgfParser.h         # Minimal SGF (game record) reader
+├── claude_instructions/    # Architecture notes for AI coding agents, and the Launchpad X protocol
 ├── sgf/                    # Sample game records for trying SGF playback
 ├── tools/
 │   └── GoAiDump.cpp        # Plays the two players outside the plugin, writes .sgf
 └── tests/
-    └── GoRulesTests.cpp    # Rules and self-play tests, run via ctest
+    └── GoRulesTests.cpp    # Rules, self-play and pad-mapping tests, run via ctest
 ```
