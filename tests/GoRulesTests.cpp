@@ -1499,6 +1499,12 @@ namespace
         check (hashGames (9, goai::Players::reading)  == 0x3559b98du, "fifteen 9x9 games, move for move");
         check (hashGames (13, goai::Players::reading) == 0x9db553cbu, "fifteen 13x13 games, move for move");
         check (hashGames (19, goai::Players::reading) == 0xea6a617bu, "fifteen 19x19 games, move for move");
+
+        //  8x8 came later, with reading weights of its own (readingTerritorial8,
+        //  readingFighting8): pinned from then on, the same way
+        std::printf ("self-play: and on the 8x8\n");
+        check (hashGames (8, goai::Players::classic) == 0x43e4aa98u, "fifteen 8x8 games, move for move");
+        check (hashGames (8, goai::Players::reading) == 0x960c294eu, "fifteen 8x8 games, tuned reading players");
     }
 
     //==============================================================================

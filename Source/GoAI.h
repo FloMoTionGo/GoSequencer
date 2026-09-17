@@ -25,9 +25,12 @@
 //  neural networks. Neither pair is AI in the machine learning sense. Both are
 //  algorithms - scoring rules, and for the reading pair a ladder reader - whose
 //  weights are numbers written by hand, the reading pair's then settled by test
-//  matches played offline between versions (tools/GoAiTune.cpp). The numbers
-//  are fixed in this file: nothing is trained, nothing learns while the plugin
-//  runs, and a game is still milliseconds of integer work.
+//  matches played offline between versions (tools/GoAiTune.cpp). On the 8x8
+//  they have weights of their own, settled offline with KataGo - a neural
+//  network Go program - judging their moves (tools/GoAiKata8.cpp): KataGo
+//  marked the moves, it did not write the numbers and is not in the plugin.
+//  The numbers are fixed in this file: nothing is trained, nothing learns
+//  while the plugin runs, and a game is still milliseconds of integer work.
 //
 //  What makes two players out of one function is the weights. Black and White
 //  hold a different Style, so they want different points from the same board -
@@ -310,16 +313,97 @@ namespace goai
         return s;
     }
 
-    /** The reading pair for a board size. 8x8 is tuned on its own (below); every
-        other size plays the two above, exactly as it always has. */
+    //  The same two on an 8x8, where a game is a fight over a few dozen points
+    //  and almost nothing is safe. They started as the two above and were
+    //  settled offline by tools/GoAiKata8.cpp with the Go program KataGo
+    //  (https://github.com/lightvector/KataGo) as the judge: KataGo scored every
+    //  move that could be played in some ninety thousand positions of their
+    //  games, once, and each weight was scaled - the same factor for both, and
+    //  never beyond a quarter or four times where it started - while the chance
+    //  of each move under the draw, times the points KataGo said it gave away,
+    //  kept falling. Three rounds, each on positions the last round's players
+    //  reached. KataGo never plays and is not part of the plugin: what came out
+    //  is these numbers, fixed like the ones above.
+    //
+    //  What changed says what an 8x8 wants: getting stones out of atari (save
+    //  and saveBonus near the cap) and not being left where a ladder works
+    //  matter far more, and staying near the last move, extending and touching
+    //  the other side's stones far less.
+
+    /** Kuro, reading, 8x8. */
+    inline ReadingStyle readingTerritorial8()
+    {
+        ReadingStyle s;
+        s.name          = "territorial";
+        s.capture       =  300;
+        s.captureBonus  =  240;
+        s.save          = 6000;
+        s.saveBonus     = 4200;
+        s.ladder        =  480;
+        s.atari         =  420;
+        s.press         =  150;
+        s.reinforce     =  300;
+        s.selfAtari     = 2250;
+        s.runIntoLadder =  700;
+        s.ladderable    = 1400;
+        s.vital         =  450;
+        s.race          =  270;
+        s.eye           =  350;
+        s.connect       =  400;
+        s.cut           =   38;
+        s.contact       =   14;
+        s.emptyTriangle =  700;
+        s.locality      =   63;
+        s.extension     =   75;
+        s.line          =  563;
+        s.territory     = 1500;
+        s.invasion      =  600;
+        s.claim         =   25;
+        return s;
+    }
+
+    /** Shiro, reading, 8x8. */
+    inline ReadingStyle readingFighting8()
+    {
+        ReadingStyle s;
+        s.name          = "fighting";
+        s.capture       =  360;
+        s.captureBonus  =  300;
+        s.save          = 5100;
+        s.saveBonus     = 3000;
+        s.ladder        =  540;
+        s.atari         = 1050;
+        s.press         =  350;
+        s.reinforce     =  150;
+        s.selfAtari     = 1950;
+        s.runIntoLadder =  600;
+        s.ladderable    =  980;
+        s.vital         =  450;
+        s.race          =  360;
+        s.eye           =  350;
+        s.connect       =  180;
+        s.cut           =  113;
+        s.contact       =   63;
+        s.emptyTriangle =  420;
+        s.locality      =  150;
+        s.extension     =   23;
+        s.line          =  281;
+        s.territory     = 1200;
+        s.invasion      =  200;
+        s.claim         =   15;
+        return s;
+    }
+
+    /** The reading pair for a board size: 8x8 has its own; every other size plays
+        readingTerritorial and readingFighting, exactly as it always has. */
     inline ReadingStyle readingBlack (int size)
     {
-        return readingTerritorial();
+        return size == 8 ? readingTerritorial8() : readingTerritorial();
     }
 
     inline ReadingStyle readingWhite (int size)
     {
-        return readingFighting();
+        return size == 8 ? readingFighting8() : readingFighting();
     }
 
     //==============================================================================
@@ -668,25 +752,24 @@ namespace goai
             into noise: the choice widens, but only over moves that scored. */
         constexpr int shortlist = 12;
 
-        /** The draw both pairs of players make once every point is scored: the
-            best point at variation 0, otherwise a softmax over the shortlist. */
-        inline int drawFromScored (std::array<Candidate, go::maxCells>& scored, int count,
-                                   int variation, Rng& rng)
+        /** Ranks the shortlist to the front of scored and, above variation 0, gives
+            each of its points its softmax weight; total is 0 when the draw has
+            nothing to choose between. Returns how long the shortlist is. The draw
+            below is made from exactly these, and tools/GoAiKata8.cpp reads them to
+            know how likely each move is. */
+        inline int shortlistWeights (std::array<Candidate, go::maxCells>& scored, int count, int variation,
+                                     std::array<std::uint32_t, (size_t) shortlist>& weights, std::uint32_t& total)
         {
-            if (count == 0)
-                return -1;
-
             const int top = std::min (count, shortlist);
 
             std::partial_sort (scored.begin(), scored.begin() + top, scored.begin() + count, better);
 
-            //  variation 0 means what it says: the best point, every time, whatever
-            //  the seed - so the whole run is one game repeating, which is a setting
-            //  someone wanting a strict loop will ask for
-            if (variation <= 0)
-                return scored[0].idx;
+            total = 0;
 
-            //  Otherwise a softmax over the shortlist, with the temperature read off
+            if (variation <= 0)
+                return top;
+
+            //  A softmax over the shortlist, with the temperature read off
             //  the spread of the shortlist rather than fixed. Score units drift with
             //  the weights and with how crowded the board is; the distance between
             //  the best point and the twelfth does not. So variation keeps meaning
@@ -696,15 +779,33 @@ namespace goai
             const int spread = scored[0].score - scored[(size_t) (top - 1)].score;
             const auto tau = (std::uint32_t) std::max (1, std::min (variation, 100) * (50 + spread) / 100);
 
-            std::array<std::uint32_t, (size_t) shortlist> weights {};
-            std::uint32_t total = 0;
-
             for (int i = 0; i < top; ++i)
             {
                 const auto behind = (std::uint32_t) (scored[0].score - scored[(size_t) i].score);
                 weights[(size_t) i] = expNegFixed ((std::uint32_t) (((std::uint64_t) behind << 16) / tau));
                 total += weights[(size_t) i];
             }
+
+            return top;
+        }
+
+        /** The draw both pairs of players make once every point is scored: the
+            best point at variation 0, otherwise a softmax over the shortlist. */
+        inline int drawFromScored (std::array<Candidate, go::maxCells>& scored, int count,
+                                   int variation, Rng& rng)
+        {
+            if (count == 0)
+                return -1;
+
+            std::array<std::uint32_t, (size_t) shortlist> weights {};
+            std::uint32_t total = 0;
+            const int top = shortlistWeights (scored, count, variation, weights, total);
+
+            //  variation 0 means what it says: the best point, every time, whatever
+            //  the seed - so the whole run is one game repeating, which is a setting
+            //  someone wanting a strict loop will ask for
+            if (variation <= 0)
+                return scored[0].idx;
 
             if (total == 0)
                 return scored[0].idx;       // everything but the best point rounded away
@@ -997,12 +1098,10 @@ namespace goai
         }
     }
 
-    /** The move a reading player would make, or -1 when it has nothing legal
-        left that is not one of its own eyes. The board is not changed; the
-        workspace is scratch and can be handed from move to move. */
-    inline int chooseReadingMove (const go::Board& board, go::Stone colour, int lastMove,
-                                  const ReadingStyle& style, int variation, Rng& rng,
-                                  ReadingWorkspace& ws)
+    /** Every point a reading player would consider, scored and read out, into
+        ws.scored; returns how many. The half of chooseReadingMove before the draw. */
+    inline int scoreReadingMoves (const go::Board& board, go::Stone colour, int lastMove,
+                                  const ReadingStyle& style, ReadingWorkspace& ws)
     {
         const int size = board.size(), cells = board.cellCount();
 
@@ -1044,7 +1143,7 @@ namespace goai
         }
 
         if (count == 0)
-            return -1;
+            return 0;
 
         //  ---- the best of them, and every atari and rescue, read out ------------
         //  The best are taken in rank order and the rest in board order, never in
@@ -1088,6 +1187,17 @@ namespace goai
             if (ws.tactical[(size_t) idx])
                 readOut (ws.scored[(size_t) ws.slot[(size_t) idx]]);
 
+        return count;
+    }
+
+    /** The move a reading player would make, or -1 when it has nothing legal
+        left that is not one of its own eyes. The board is not changed; the
+        workspace is scratch and can be handed from move to move. */
+    inline int chooseReadingMove (const go::Board& board, go::Stone colour, int lastMove,
+                                  const ReadingStyle& style, int variation, Rng& rng,
+                                  ReadingWorkspace& ws)
+    {
+        const int count = scoreReadingMoves (board, colour, lastMove, style, ws);
         return detail::drawFromScored (ws.scored, count, variation, rng);
     }
 

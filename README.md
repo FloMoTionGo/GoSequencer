@@ -20,6 +20,13 @@ overview.
 > algorithms with fixed weights: no neural network, no machine-learning model,
 > no training data, and nothing that learns while the plugin runs. See
 > [Where the reading players come from](#where-the-reading-players-come-from-leela).
+>
+> **Credit — KataGo.** The reading players' **8×8** weights were settled offline
+> with [**KataGo**](https://github.com/lightvector/KataGo), the Go program by
+> David J. Wu (MIT licence), as the judge of their moves. KataGo *is* a
+> neural-network program, but it only marked moves on the development machine:
+> it is not in the plugin, never plays in it, and what came out is a set of
+> fixed numbers. See [The 8×8 weights (KataGo)](#the-88-weights-katago).
 
 ## Table of contents
 
@@ -30,6 +37,7 @@ overview.
 - [Loading a game record (SGF)](#loading-a-game-record-sgf)
 - [AI self-play](#ai-self-play)
 - [Where the reading players come from (Leela)](#where-the-reading-players-come-from-leela)
+  - [The 8×8 weights (KataGo)](#the-88-weights-katago)
 - [Playing against the AI](#playing-against-the-ai)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
   - [One track per channel: the MIDI out port (needs loopMIDI)](#one-track-per-channel-the-midi-out-port-needs-loopmidi)
@@ -277,7 +285,63 @@ between sessions. The weights are ordinary numbers in
 adjusted once, offline, by playing thousands of test games between versions and
 keeping the changes that won (`tools/GoAiTune.cpp`, a local tool like
 `GoAiDump`); after that they were fixed, which is also what keeps every seed
-reproducible.
+reproducible. The 8×8 has its own reading weights, adjusted the same one-at-a-time
+way but with KataGo judging the moves — described next.
+
+### The 8×8 weights (KataGo)
+
+An 8×8 game is a close fight over a few dozen points, and the weights tuned on
+9×9 and 13×13 were not made for it. So the reading pair got a second set for the
+8×8 only, settled offline with [**KataGo**](https://github.com/lightvector/KataGo)
+as the judge.
+
+**How.** Kuro and Shiro played a few hundred 8×8 games (half from the book,
+half from a few random stones). For every position in them, KataGo scored every
+move that could have been played there, once: how many points each gives away
+against the best of them. A set of weights is then worth the points its players
+are *expected* to give away: in each position, the exact chance of each move
+under the plugin's own draw at variation 35, times that move's cost. One weight
+at a time was scaled — the same factor for Kuro and Shiro, never below a quarter
+or above four times its 9×9 value, so both temperaments survive — and a change
+was kept while that number fell. Three rounds, each on positions the previous
+round's players actually reached (about 92,000 positions and 2.4 million KataGo
+evaluations in all), with every fourth game held back to check the gains carry
+over. The tools are `tools/GoAiKata8.cpp` and `tools/katago8/tune8.py`, local
+like `GoAiTune`.
+
+**What changed.** Rescuing stones from atari and not being left in a working
+ladder count for far more on an 8×8; staying near the last move, extending and
+touching the other side's stones count for far less.
+
+**How much better.** Played out on fresh seeds and scored by KataGo move by move
+(variation 35, 2000 games each):
+
+| 8×8 | points given away per move | Black wins |
+|---|---|---|
+| classic Kuro vs classic Shiro | 6.68 | 38% |
+| reading, 9×9 weights | 5.71 | 40% |
+| **reading, 8×8 weights** | **5.46** | 47% |
+
+Head to head, the tuned players beat the ones they started from, from either colour
+(2000 games each, fresh seeds, komi 7.5, area scoring):
+
+| 8×8 | Black wins | Black's margin |
+|---|---|---|
+| 9×9-weight Kuro vs 9×9-weight Shiro | 42.8% | −2.3 |
+| **8×8** Kuro vs 9×9-weight Shiro | 48.5% | +0.3 |
+| 9×9-weight Kuro vs **8×8** Shiro | 37.7% | −5.5 |
+
+The gain is real but modest — these are still simple players, and KataGo would
+beat either set by the whole board.
+
+**What KataGo is not doing.** KataGo is a neural network program, and it was
+used only as a marker, on the development machine, before release. It is not
+shipped with the plugin, not loaded by it and never asked anything while you
+play. It did not write the weights either: the search over them is plain
+arithmetic. The 8×8 players are the same integer scoring rules as on every other
+board, with different fixed numbers in [`Source/GoAI.h`](Source/GoAI.h) — no
+network, no model, nothing that learns — and a seed still names the same game on
+every machine.
 
 ## Playing against the AI
 

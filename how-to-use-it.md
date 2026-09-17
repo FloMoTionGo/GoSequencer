@@ -470,6 +470,18 @@ offline, by playing thousands of test games between versions and keeping the
 changes that won; after that they were written into the code, and they never
 change.
 
+**The 8×8 is tuned on its own, with KataGo as the judge.** On an 8×8 the reading
+pair use a second set of weights. Those were adjusted offline with
+[**KataGo**](https://github.com/lightvector/KataGo) — a strong Go program by
+David J. Wu that *does* use a neural network — marking how many points each
+possible move in tens of thousands of their positions gives away, and keeping
+the weight changes that made them give away less. KataGo only marked moves, on
+the development machine: it is not part of the plugin, is never run while you
+play, and the result is fixed numbers like every other weight. On fresh test
+games the 8×8 players now give away about 5.5 points a move where the 9×9
+weights gave away 5.7 (the classic pair: 6.7). Details in the README, under *The
+8×8 weights (KataGo)*.
+
 ### Wave Replay
 
 **Wave Replay** is a second way to pace the same game record. Turn it on
