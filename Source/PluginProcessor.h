@@ -9,6 +9,7 @@
 
 #include "GoAI.h"
 #include "GoBoard.h"
+#include "LaunchpadSurface.h"
 #include "MidiPortOut.h"
 #include "SgfParser.h"
 
@@ -344,6 +345,29 @@ public:
 
     bool midiOutPortOpen() const noexcept { return portOut.isOpen(); }
 
+    //==============================================================================
+    //  The Launchpad: its grid as a view of the board and a way to play on it (see
+    //  LaunchpadSurface). Like the MIDI out port, the port names are kept in the
+    //  state rather than in parameters, being a device on this machine - and
+    //  there are two of them, since on Windows its in and out are named apart.
+    //  Message thread, apart from launchpadOpen().
+    //
+    //  Restoring a session reopens the ports and does nothing else. It does not
+    //  change the board size to fit the grid: that clears the board, and only
+    //  ever happens when someone picks the controller by hand.
+
+    /** Drives the Launchpad on this pair of ports, or nothing for empty names.
+        Saved with the session. */
+    void setLaunchpadPorts (const juce::String& in, const juce::String& out);
+
+    juce::String launchpadIn()  const;
+    juce::String launchpadOut() const;
+
+    bool launchpadOpen() const noexcept { return pads.isOpen(); }
+
+    LaunchpadSurface&       launchpad() noexcept       { return pads; }
+    const LaunchpadSurface& launchpad() const noexcept { return pads; }
+
     juce::AudioProcessorValueTreeState apvts;
 
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
@@ -639,6 +663,11 @@ private:
 
     //  the notes' second way out, besides the host - see setMidiOutPort()
     MidiPortOut portOut;
+
+    //  Last, so it is the first thing to go. Until its timer stops it reads the
+    //  board and the parameters, and both of those have to still be here - a
+    //  member is destroyed before any member declared above it.
+    LaunchpadSurface pads { *this };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerProcessor)
 };

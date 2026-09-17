@@ -48,7 +48,8 @@ target_sources(GoSequencer
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/BoardComponent.cpp
-        Source/MidiPortOut.cpp)
+        Source/MidiPortOut.cpp
+        Source/LaunchpadSurface.cpp)
 
 target_compile_definitions(GoSequencer
     PUBLIC

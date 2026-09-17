@@ -62,6 +62,10 @@ namespace
     //  is a device on this machine, not something to automate
     const juce::Identifier midiOutPortProperty { "midiOutPort" };
 
+    //  the same for the Launchpad, whose two ports are named apart on Windows
+    const juce::Identifier launchpadInProperty  { "launchpadIn" };
+    const juce::Identifier launchpadOutProperty { "launchpadOut" };
+
     /** How many quarter notes one game move lasts. */
     double gameStepInBeats (int rateIndex, double barBeats, double stepBeats, int lapSteps)
     {
@@ -681,7 +685,6 @@ void GoSequencerProcessor::handleAsyncUpdate()
     if (pendingAiPrepare.exchange (false, std::memory_order_relaxed))
         prepareNextAiGame();
 
-    //  a restored session names its port, and opening one belongs here
     if (pendingMatchChange.exchange (false, std::memory_order_relaxed))
     {
         const bool wanted = aiOpponentParam != nullptr && aiOpponentParam->get();
@@ -696,8 +699,12 @@ void GoSequencerProcessor::handleAsyncUpdate()
     if (pendingOpponentReply.exchange (false, std::memory_order_relaxed))
         playOpponentReply();
 
+    //  a restored session names its ports, and opening them belongs here
     if (pendingPortReopen.exchange (false, std::memory_order_relaxed))
+    {
         portOut.setPort (midiOutPort());
+        pads.setPorts ({ launchpadIn(), launchpadOut() });
+    }
 }
 
 void GoSequencerProcessor::clampStoneLifeToWaveGap()
@@ -1908,6 +1915,7 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     if (juce::MessageManager::existsAndIsCurrentThread())
     {
         portOut.setPort (midiOutPort());
+        pads.setPorts ({ launchpadIn(), launchpadOut() });
     }
     else
     {
@@ -1926,6 +1934,24 @@ void GoSequencerProcessor::setMidiOutPort (const juce::String& name)
 juce::String GoSequencerProcessor::midiOutPort() const
 {
     return apvts.state.getProperty (midiOutPortProperty).toString();
+}
+
+//==============================================================================
+void GoSequencerProcessor::setLaunchpadPorts (const juce::String& in, const juce::String& out)
+{
+    apvts.state.setProperty (launchpadInProperty,  in,  nullptr);
+    apvts.state.setProperty (launchpadOutProperty, out, nullptr);
+    pads.setPorts ({ in, out });
+}
+
+juce::String GoSequencerProcessor::launchpadIn() const
+{
+    return apvts.state.getProperty (launchpadInProperty).toString();
+}
+
+juce::String GoSequencerProcessor::launchpadOut() const
+{
+    return apvts.state.getProperty (launchpadOutProperty).toString();
 }
 
 //==============================================================================

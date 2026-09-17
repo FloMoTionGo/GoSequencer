@@ -96,6 +96,137 @@ namespace
 }
 
 //==============================================================================
+void LaunchpadDiagram::paint (juce::Graphics& g)
+{
+    //  The top row left to right, then the right hand column top to bottom -
+    //  the order LaunchpadSurface::handleButton gives them their jobs in.
+    static const char* const topJobs[8]  = { "rate +", "rate -", "step back", "step on",
+                                             "run game", "free run", "place", "hold: clear" };
+    static const char* const sideJobs[8] = { "play vs AI", "pass", "lift last", "loop",
+                                             "wave replay", "move rate +", "move rate -", "redraw" };
+
+    //  lettered at 175% of the captions elsewhere: this is a map to be read at
+    //  a glance from a Launchpad in the hands, not a label beside a control
+    const auto font = captionFont().withHeight (captionFont().getHeight() * 1.75f);
+    const float lineHeight = font.getHeight() + 2.0f;
+    const float gap = 8.0f, footerHeight = 2.0f * lineHeight;
+
+    //  room for the longest label on each side: the top ones stand on end
+    float sideWidth = 0.0f, topHeight = 0.0f;
+
+    for (auto* job : sideJobs) sideWidth = juce::jmax (sideWidth, (float) textWidth (font, job));
+    for (auto* job : topJobs)  topHeight = juce::jmax (topHeight, (float) textWidth (font, job));
+
+    const auto area = getLocalBounds().toFloat();
+
+    //  the pitch of one pad: as big as the space allows, and no bigger than a
+    //  drawing needs to be read
+    const float pitch = juce::jmin (40.0f,
+                                    (area.getWidth() - gap - sideWidth) / 9.0f,
+                                    (area.getHeight() - topHeight - 2.0f * gap - footerHeight) / 9.0f);
+
+    if (pitch < 9.0f)
+        return;             //  too little room to draw anything worth reading
+
+    //  centred in the space it is given, labels and all
+    const float blockWidth  = 9.0f * pitch + gap + sideWidth;
+    const float blockHeight = topHeight + gap + 9.0f * pitch + gap + footerHeight;
+    const float gridX = area.getCentreX() - blockWidth * 0.5f;
+    const float gridY = area.getCentreY() - blockHeight * 0.5f + topHeight + gap;
+
+    const auto cell = [&] (int col, int row)
+    {
+        return juce::Rectangle<float> (gridX + (float) col * pitch, gridY + (float) row * pitch, pitch, pitch)
+                 .reduced (pitch * 0.1f);
+    };
+
+    const float corner = pitch * 0.14f;
+
+    //  the body
+    g.setColour (theme::hairline);
+    g.drawRoundedRectangle (juce::Rectangle<float> (gridX, gridY, 9.0f * pitch, 9.0f * pitch).expanded (pitch * 0.18f),
+                            pitch * 0.25f, 1.0f);
+
+    //  the 8x8 grid - the board itself
+    for (int row = 1; row <= 8; ++row)
+    {
+        for (int col = 0; col < 8; ++col)
+        {
+            g.setColour (theme::boardFill);
+            g.fillRoundedRectangle (cell (col, row), corner);
+            g.setColour (theme::gridLine);
+            g.drawRoundedRectangle (cell (col, row), corner, 1.0f);
+        }
+    }
+
+    //  the buttons round the edge, in the playhead's colour so they stand out
+    //  from the pads
+    const auto edgeButton = [&] (juce::Rectangle<float> r)
+    {
+        g.setColour (theme::accent.withAlpha (0.12f));
+        g.fillRoundedRectangle (r, corner);
+        g.setColour (theme::accent.withAlpha (0.8f));
+        g.drawRoundedRectangle (r, corner, 1.2f);
+    };
+
+    for (int i = 0; i < 8; ++i)
+    {
+        edgeButton (cell (i, 0));
+        edgeButton (cell (8, i + 1));
+    }
+
+    //  the logo, top right, which does nothing here
+    g.setColour (theme::faintText);
+    g.fillEllipse (cell (8, 0).reduced (pitch * 0.22f));
+
+    //  the first four of the top row are arrows on the device, so they are here
+    {
+        g.setColour (theme::accent);
+
+        for (int i = 0; i < 4; ++i)
+        {
+            const auto c = cell (i, 0).getCentre();
+            const float s = pitch * 0.2f;
+            juce::Path arrow;
+            arrow.addTriangle (0.0f, -s, s, s * 0.7f, -s, s * 0.7f);     //  pointing up
+
+            static constexpr float turns[4] = { 0.0f, 1.0f, -0.5f, 0.5f };  //  up, down, left, right
+            arrow.applyTransform (juce::AffineTransform::rotation (turns[i] * juce::MathConstants<float>::pi)
+                                    .translated (c.x, c.y));
+            g.fillPath (arrow);
+        }
+    }
+
+    g.setFont (font);
+    g.setColour (theme::ink);
+
+    //  top row: each job stands on end above its button, reading upward
+    for (int i = 0; i < 8; ++i)
+    {
+        const float x = gridX + ((float) i + 0.5f) * pitch;
+        const float y = gridY - gap;
+
+        juce::Graphics::ScopedSaveState state (g);
+        g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, x, y));
+        g.drawText (topJobs[i], juce::Rectangle<float> (x, y - lineHeight * 0.5f, topHeight, lineHeight),
+                    juce::Justification::centredLeft, false);
+    }
+
+    //  right hand column: each job beside its button
+    for (int i = 0; i < 8; ++i)
+        g.drawText (sideJobs[i],
+                    juce::Rectangle<float> (gridX + 9.0f * pitch + gap, gridY + (float) (i + 1) * pitch, sideWidth + 2.0f, pitch),
+                    juce::Justification::centredLeft, false);
+
+    //  and the grid, under the drawing
+    g.setColour (theme::dimText);
+    //  two lines' room, since at this size the sentence outgrows a narrow window
+    g.drawFittedText ("pads: the 8 x 8 board - press to place, press a stone to lift it",
+                      juce::Rectangle<float> (area.getX(), gridY + 9.0f * pitch + gap, area.getWidth(), footerHeight).toNearestInt(),
+                      juce::Justification::centredTop, 2, 1.0f);
+}
+
+//==============================================================================
 GoLookAndFeel::GoLookAndFeel()
 {
     setColourScheme (juce::LookAndFeel_V4::getLightColourScheme());
@@ -331,7 +462,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     //  ---- the tabs ---------------------------------------------------------
     //  One tab of controls at a time, laid out in the same rectangle, so
     //  switching never resizes the window under the host.
-    const char* const tabNames[tabCount] = { "Sequencer", "Board", "Channels", "Game", "AI" };
+    const char* const tabNames[tabCount] = { "Sequencer", "Board", "Channels", "Game", "AI", "Pads" };
 
     for (int t = 0; t < tabCount; ++t)
     {
@@ -539,6 +670,67 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
 
     setUpText (aiTab, matchLabel, juce::Justification::topLeft);
 
+    //  ---- the Launchpad ----------------------------------------------------
+    //  Its grid as the board. Choosing the ports is all there is to it: the
+    //  plugin puts the Launchpad into Programmer mode itself and gives it back
+    //  when it lets go, so nothing is set up in Novation Components.
+    padsInBox.setTitle ("launchpad in");
+    padsInBox.onOpen = [this] { refreshPadsLists(); };
+    padsInBox.onChange = [this]
+    {
+        const int index = padsInBox.getSelectedId() - 2;
+
+        choosePadsPorts (juce::isPositiveAndBelow (index, padsInItems.size()) ? padsInItems[index] : juce::String(),
+                         processor.launchpadOut());
+    };
+    addToTab (padsTab, padsInBox);
+    setUpCaption (padsTab, padsInCaption, "launchpad in");
+
+    padsOutBox.setTitle ("launchpad out");
+    padsOutBox.onOpen = [this] { refreshPadsLists(); };
+    padsOutBox.onChange = [this]
+    {
+        const int index = padsOutBox.getSelectedId() - 2;
+
+        choosePadsPorts (processor.launchpadIn(),
+                         juce::isPositiveAndBelow (index, padsOutItems.size()) ? padsOutItems[index] : juce::String());
+    };
+    addToTab (padsTab, padsOutBox);
+    setUpCaption (padsTab, padsOutCaption, "launchpad out");
+
+    setUpButton (padsTab, padsFindButton, "Find Launchpad", [this]
+    {
+        const auto found = LaunchpadSurface::findLaunchpad();
+
+        if (found.in.isEmpty() || found.out.isEmpty())
+        {
+            showMessage ("no Launchpad X found - is it plugged in?");
+            refreshPadsLists();
+            return;
+        }
+
+        choosePadsPorts (found.in, found.out);
+    });
+
+    setUpButton (padsTab, padsSizeButton, "Use 8 x 8", [this]
+    {
+        useLaunchpadBoardSize();
+        showMessage ("the board is 8 x 8 now, the size of the grid");
+    });
+
+    setUpButton (padsTab, padsStopButton, "Stop", [this]
+    {
+        processor.setLaunchpadPorts ({}, {});
+        refreshPadsLists();
+        showMessage ("the Launchpad is back to its own modes");
+    });
+
+    setUpText (padsTab, padsStatusLabel, juce::Justification::topLeft);
+
+    //  the device itself, with what each button round its edge does here
+    addToTab (padsTab, padsDiagram);
+
+    refreshPadsLists();
     refreshMatchDisplay();
     refreshOpeningDisplay();
     refreshGameDisplay();
@@ -605,6 +797,7 @@ void GoSequencerEditor::setDarkMode (bool dark)
     refreshGameDisplay();
     refreshPortStatus();
     refreshMatchDisplay();
+    refreshPadsStatus();
 
     processor.apvts.state.setProperty (darkModeProperty, dark, nullptr);
 
@@ -838,6 +1031,130 @@ void GoSequencerEditor::refreshMatchDisplay()
 }
 
 //==============================================================================
+void GoSequencerEditor::refreshPadsLists()
+{
+    const auto fill = [] (RefreshingComboBox& box, juce::StringArray& items,
+                          juce::StringArray available, const juce::String& wanted)
+    {
+        items = std::move (available);
+
+        //  a port the session names but the system does not have right now stays
+        //  in the list, so the choice survives the Launchpad being unplugged
+        const bool missing = wanted.isNotEmpty() && ! items.contains (wanted);
+
+        if (missing)
+            items.add (wanted);
+
+        box.clear (juce::dontSendNotification);
+        box.addItem ("Off", 1);
+
+        for (int i = 0; i < items.size(); ++i)
+            box.addItem (items[i] + (missing && i == items.size() - 1 ? "  (not there)" : ""), i + 2);
+
+        box.setSelectedId (wanted.isEmpty() ? 1 : items.indexOf (wanted) + 2, juce::dontSendNotification);
+    };
+
+    fill (padsInBox,  padsInItems,  LaunchpadSurface::availableInputs(),  processor.launchpadIn());
+    fill (padsOutBox, padsOutItems, LaunchpadSurface::availableOutputs(), processor.launchpadOut());
+
+    refreshPadsStatus();
+}
+
+void GoSequencerEditor::refreshPadsStatus()
+{
+    const auto in   = processor.launchpadIn();
+    const auto out  = processor.launchpadOut();
+    const bool open = processor.launchpadOpen();
+    const int size  = processor.boardSize();
+    const auto surface = processor.launchpad().status();
+
+    const bool chosen = in.isNotEmpty() && out.isNotEmpty();
+
+    juce::String line;
+    bool trouble = false;
+
+    if (in.isEmpty() && out.isEmpty())
+    {
+        line = "no controller - plug in a Launchpad X and press Find Launchpad";
+    }
+    else if (! chosen)
+    {
+        line = "choose an in port and an out port - Find Launchpad does both";
+        trouble = true;
+    }
+   #if JUCE_WINDOWS
+    else if (in.equalsIgnoreCase ("LPX MIDI") || out.equalsIgnoreCase ("LPX MIDI"))
+    {
+        //  Windows lists the Launchpad's DAW interface as a bare "LPX MIDI", just
+        //  above the MIDIIN2 / MIDIOUT2 pair the grid talks on - easily picked
+        line = "that is the Launchpad's DAW port - the pads need MIDIIN2 and MIDIOUT2 (LPX MIDI): "
+               "press Find Launchpad";
+        trouble = true;
+    }
+   #endif
+    else
+    {
+        //  a restored session opens its ports a moment after the editor asks
+        line = surface.isNotEmpty() ? surface : "opening " + out;
+        trouble = ! open || size != lpx::boardSize;
+    }
+
+    padsStatusLabel.setText (line, juce::dontSendNotification);
+    padsStatusLabel.setColour (juce::Label::textColourId, trouble ? theme::accent : theme::dimText);
+
+    padsSizeButton.setEnabled (chosen && size != lpx::boardSize);
+    padsStopButton.setEnabled (in.isNotEmpty() || out.isNotEmpty());
+
+    lastPadsStatusShown = surface;
+    lastPadsOpenShown = open;
+    lastPadsSizeShown = size;
+}
+
+void GoSequencerEditor::choosePadsPorts (const juce::String& in, const juce::String& out)
+{
+    processor.setLaunchpadPorts (in, out);
+
+    //  The grid only shows an 8x8, so choosing the controller is taken as asking
+    //  for that board. A size change clears the board, though, so when there is
+    //  anything on it to lose, the change waits for Use 8 x 8.
+    if (in.isNotEmpty() && out.isNotEmpty() && processor.boardSize() != lpx::boardSize)
+    {
+        if (boardHasSomethingToLose())
+            showMessage ("the pads stay dark until the board is 8 x 8 - Use 8 x 8 clears this one");
+        else
+            useLaunchpadBoardSize();
+    }
+
+    refreshPadsLists();
+}
+
+void GoSequencerEditor::useLaunchpadBoardSize()
+{
+    //  through the parameter, as the board dropdown does, so the host hears
+    //  about it and the dropdown follows
+    if (auto* size = dynamic_cast<juce::AudioParameterChoice*> (processor.apvts.getParameter ("boardSize")))
+    {
+        size->beginChangeGesture();
+        size->setValueNotifyingHost (size->convertTo0to1 ((float) go::sizeSlot (lpx::boardSize)));
+        size->endChangeGesture();
+    }
+}
+
+bool GoSequencerEditor::boardHasSomethingToLose() const
+{
+    if (processor.hasGame())
+        return true;            //  a record of another size goes with the board
+
+    const int cells = processor.boardSize() * processor.boardSize();
+
+    for (int i = 0; i < cells; ++i)
+        if (processor.stoneAt (i) != go::Stone::none)
+            return true;
+
+    return false;
+}
+
+//==============================================================================
 bool GoSequencerEditor::isInterestedInFileDrag (const juce::StringArray& files)
 {
     for (const auto& file : files)
@@ -910,10 +1227,19 @@ void GoSequencerEditor::resized()
     {
         auto strip = column.removeFromTop (tabHeight);
 
+        //  six tabs only just fit the narrowest window, so the gaps between them
+        //  close up a little before any tab is cut short
+        int textTotal = 0;
+
+        for (auto& tab : tabButtons)
+            textTotal += textWidth (tabFont(), tab.getButtonText().toUpperCase()) + 2;
+
+        const int gap = juce::jlimit (8, tabGap, (strip.getWidth() - textTotal) / juce::jmax (1, tabCount - 1));
+
         for (auto& tab : tabButtons)
         {
             tab.setBounds (strip.removeFromLeft (textWidth (tabFont(), tab.getButtonText().toUpperCase()) + 2));
-            strip.removeFromLeft (tabGap);
+            strip.removeFromLeft (gap);
         }
     }
 
@@ -1055,6 +1381,22 @@ void GoSequencerEditor::resized()
 
         matchLabel.setBounds (rows.removeFromTop (textLinesHeight));
     }
+
+    //  ---- the Launchpad ----------------------------------------------------
+    {
+        auto rows = column;
+
+        //  in and out side by side, since on Windows the two are named apart
+        auto cells = columns (nextRow (rows, cellHeight), 2);
+        placeLabelled (cells[0], padsInCaption, padsInBox);
+        placeLabelled (cells[1], padsOutCaption, padsOutBox);
+
+        flow (nextRow (rows, controlHeight), { &padsFindButton, &padsSizeButton, &padsStopButton });
+
+        //  three lines, because the one that says the port is taken is long
+        padsStatusLabel.setBounds (nextRow (rows, textLinesHeight * 3 / 2));
+        padsDiagram.setBounds (rows);
+    }
 }
 
 //==============================================================================
@@ -1154,6 +1496,29 @@ void GoSequencerEditor::timerCallback()
     //  though never from under an open popup
     if (processor.midiOutPortOpen() != lastPortOpenShown && ! portBox.isPopupActive())
         refreshPortList();
+
+    //  the same for the Launchpad, which can also be taken by another program -
+    //  and whose pads go dark on a board of another size, so that is watched too
+    {
+        const int size = processor.boardSize();
+
+        if (size != lastBoardSizeShown)
+        {
+            lastBoardSizeShown = size;
+            board.repaint();
+        }
+
+        //  Listing the ports is a round trip to the system's MIDI service, slow
+        //  enough to feel, so the lists are only read again when the Launchpad
+        //  comes or goes; a new status or board size just rewrites the line.
+        if (! padsInBox.isPopupActive() && ! padsOutBox.isPopupActive())
+        {
+            if (processor.launchpadOpen() != lastPadsOpenShown)
+                refreshPadsLists();
+            else if (size != lastPadsSizeShown || processor.launchpad().status() != lastPadsStatusShown)
+                refreshPadsStatus();
+        }
+    }
 
     const int position = processor.gamePosition();
 

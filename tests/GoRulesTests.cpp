@@ -5,6 +5,7 @@
 
 #include "GoAI.h"
 #include "GoBoard.h"
+#include "LaunchpadMap.h"
 #include "SgfParser.h"
 
 #include <algorithm>
@@ -1386,6 +1387,68 @@ namespace
     }
 
     //==============================================================================
+    //  Which pad of a Launchpad X is which point of the board (LaunchpadMap.h).
+    //  The device counts its rows from the bottom and the plugin counts them from
+    //  the top, so the one thing worth proving is that nothing ends up flipped.
+
+    void testPadMapping()
+    {
+        std::printf ("launchpad: which pad is which point\n");
+
+        check (lpx::padIndex (0, 0) == 81 && lpx::padIndex (7, 0) == 88, "the top row of pads is 81 to 88");
+        check (lpx::padIndex (0, 7) == 11 && lpx::padIndex (7, 7) == 18, "and the bottom row 11 to 18");
+
+        bool roundTrips = true, allPads = true;
+
+        for (int row = 0; row < lpx::side; ++row)
+            for (int col = 0; col < lpx::side; ++col)
+            {
+                const int pad = lpx::padIndex (col, row);
+
+                if (! lpx::isPad (pad)) allPads = false;
+                if (lpx::padCol (pad) != col || lpx::padRow (pad) != row) roundTrips = false;
+            }
+
+        check (allPads, "all sixty four of them are pads");
+        check (roundTrips, "and each one gives its column and row back");
+
+        check (! lpx::isPad (10) && ! lpx::isPad (19) && ! lpx::isPad (89) && ! lpx::isPad (99),
+               "the perimeter and the logo are not pads");
+
+        check (lpx::sceneIndex (0) == 89 && lpx::sceneIndex (7) == 19,
+               "the right hand column runs 89 at the top down to 19");
+        check (lpx::isScene (89) && lpx::isScene (19) && lpx::sceneRow (89) == 0 && lpx::sceneRow (19) == 7,
+               "and gives its row back");
+        check (lpx::topIndex (0) == 91 && lpx::topIndex (7) == 98, "the top row runs 91 to 98");
+        check (lpx::isTop (91) && lpx::isTop (98) && ! lpx::isTop (99) && lpx::topCol (94) == 3,
+               "and gives its column back, the logo not being part of it");
+
+        check (lpx::canShow (8) && ! lpx::canShow (9) && ! lpx::canShow (19),
+               "an 8x8 is the only board the grid can show whole");
+
+        bool boardRoundTrips = true, nothingFlipped = true;
+
+        for (int idx = 0; idx < 64; ++idx)
+        {
+            const int pad = lpx::padIndexFor (idx, 8);
+
+            if (pad < 0 || lpx::boardIndexFor (pad, 8) != idx)
+                boardRoundTrips = false;
+
+            if (pad >= 0 && (lpx::padCol (pad) != go::colOf (idx, 8) || lpx::padRow (pad) != go::rowOf (idx, 8)))
+                nothingFlipped = false;
+        }
+
+        check (boardRoundTrips, "every point of an 8x8 has a pad, and every pad its point");
+        check (nothingFlipped, "with row 0 at the top on both sides, so the board is not upside down");
+
+        check (lpx::boardIndexFor (lpx::padIndex (0, 0), 8) == go::index (0, 0, 8),
+               "the top left pad is the top left point");
+        check (lpx::boardIndexFor (81, 9) == -1 && lpx::padIndexFor (0, 19) == -1,
+               "and a board the grid cannot show whole maps to nothing rather than to a lie");
+    }
+
+    //==============================================================================
     //  The classic players, pinned. A session saved with them plays its games
     //  again from the seed, so not one of their moves may ever change. These are
     //  hashes of fifteen long games a board, taken before the reading players
@@ -1733,6 +1796,7 @@ int main (int argc, char** argv)
     testStarPoints8();
     testCapture8();
     testAi8x8();
+    testPadMapping();
 
     testAiClassicUnchanged();
 

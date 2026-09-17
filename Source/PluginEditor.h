@@ -60,6 +60,19 @@ public:
 };
 
 //==============================================================================
+/** A drawing of a Launchpad X with what each button round its edge does here.
+    Novation printed its own names on those buttons, and none of them is what
+    the button does in this plugin, so the Pads tab draws the device and writes
+    the real job beside each one. It only draws: clicks go straight through. */
+class LaunchpadDiagram final : public juce::Component
+{
+public:
+    LaunchpadDiagram() { setInterceptsMouseClicks (false, false); }
+
+    void paint (juce::Graphics&) override;
+};
+
+//==============================================================================
 class GoSequencerEditor final : public juce::AudioProcessorEditor,
                                 public juce::FileDragAndDropTarget,
                                 private juce::Timer
@@ -83,7 +96,8 @@ private:
 
     /** The tabs the controls are split across. `pinned` is not a tab: it marks
         the controls that stay beside the board whichever tab is open. */
-    enum Tab { pinned = -1, sequencerTab, boardTab, channelsTab, gameTab, aiTab, tabCount };
+    //  The open tab is saved as its number, so a new tab goes on the end.
+    enum Tab { pinned = -1, sequencerTab, boardTab, channelsTab, gameTab, aiTab, padsTab, tabCount };
 
     void timerCallback() override;
 
@@ -208,6 +222,31 @@ private:
     juce::Label portCaption, portStatusLabel;
     juce::StringArray portItems;        //  item id i + 2 is portItems[i]; id 1 is Off
     bool lastPortOpenShown = false;
+
+    /** The Launchpad's two port dropdowns and the line saying what it is doing -
+        re-read whenever that changes, since a Launchpad can be plugged in, pulled
+        out, or taken by another program with nothing clicked here. */
+    void refreshPadsLists();
+    void refreshPadsStatus();
+
+    /** Drives the Launchpad on these ports, and asks for the board it can show.
+        The size only changes by itself when there is nothing on the board to
+        lose; otherwise Use 8 x 8 does it, once the status line has said why. */
+    void choosePadsPorts (const juce::String& in, const juce::String& out);
+    void useLaunchpadBoardSize();
+    bool boardHasSomethingToLose() const;
+
+    RefreshingComboBox padsInBox, padsOutBox;
+    juce::Label padsInCaption, padsOutCaption, padsStatusLabel;
+    LaunchpadDiagram padsDiagram;
+    juce::TextButton padsFindButton, padsSizeButton, padsStopButton;
+    juce::StringArray padsInItems, padsOutItems;     //  as portItems: id i + 2, and id 1 is Off
+    juce::String lastPadsStatusShown;
+    bool lastPadsOpenShown = false;
+    int lastPadsSizeShown = 0;
+
+    //  the board view repaints on a step or a move, and a new size is neither
+    int lastBoardSizeShown = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerEditor)
 };
