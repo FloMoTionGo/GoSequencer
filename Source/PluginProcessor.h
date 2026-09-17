@@ -170,6 +170,11 @@ public:
     int  capturedBlack()  const noexcept { return prisonersBlack.load (std::memory_order_relaxed); }
     int  capturedWhite()  const noexcept { return prisonersWhite.load (std::memory_order_relaxed); }
     int  lastMove()       const noexcept { return lastMoveIndex.load (std::memory_order_relaxed); }
+
+    /** Goes up whenever the board is published. A view that repaints when this
+        moves sees every stone, whoever placed it - a click, a Launchpad pad, the
+        players' answer or a record - not only the ones it was clicked for. */
+    unsigned boardChangeCount() const noexcept { return boardChanges.load (std::memory_order_relaxed); }
     int  currentStep()    const noexcept { return step.load (std::memory_order_relaxed); }
     bool isRunning()      const noexcept { return running.load (std::memory_order_relaxed); }
     bool waveReplayOn()   const noexcept { return waveReplayParam != nullptr && waveReplayParam->get(); }
@@ -220,6 +225,47 @@ public:
     //  Switching AI Self-Play off and on starts a fresh run from game 1.
 
     bool aiSelfPlay()   const noexcept { return aiActive.load (std::memory_order_relaxed); }
+
+    //==============================================================================
+    //  Playing against them.
+    //
+    //  The same two players as self-play, answering a move at a time instead of
+    //  writing a whole record: you place a stone and the reply lands in the same
+    //  gesture. What the board is for does not change - it is still the pattern
+    //  the playheads read - so a game against them is a way of writing one, not a
+    //  mode that takes the sequencer away.
+    //
+    //  Whose turn it is lives in nextAlternating, which was already there and is
+    //  already saved with the session. There is deliberately no second turn
+    //  variable: two of them would only ever disagree.
+    //
+    //  A match owns the board, so it is exclusive with the two other things that
+    //  write to it - a loaded record and a self-play run. Starting a match ends
+    //  those, and starting either of those ends the match.
+
+    bool matchActive() const noexcept { return matchOn.load (std::memory_order_relaxed); }
+    bool matchIsOver() const noexcept { return matchOver.load (std::memory_order_relaxed); }
+
+    /** The colour they answer with, and the one your presses place. */
+    go::Stone opponentColour() const noexcept;
+    go::Stone yourColour()     const noexcept { return go::other (opponentColour()); }
+
+    /** Whether the board is waiting for you. False once the game is over. */
+    bool yourTurn() const noexcept;
+
+    /** You pass. They answer, and two passes in a row end the game. */
+    void passMove();
+
+    /** A fresh game on an empty board, from move one. */
+    void newMatch();
+
+    /** Lifting a stone is not something you may do in a match: the position is
+        the record of the game, and taking a move back out of it would make it a
+        different game. The board view and the controller both ask this first. */
+    bool eraseAllowed() const noexcept { return ! matchActive(); }
+
+    /** Passes in a row: 0, 1, or 2 for a game that is over. */
+    int passCount() const noexcept { return matchPasses.load (std::memory_order_relaxed); }
 
     //==============================================================================
     //  The opening. Ten moves, black first, and the same ten at the start of
@@ -309,6 +355,7 @@ public:
     static juce::StringArray playModeNames();
     static juce::StringArray lifeModeNames();
     static juce::StringArray aiPlayersNames();
+    static juce::StringArray aiOpponentColourNames();
 
 private:
     //==============================================================================
@@ -423,6 +470,24 @@ private:
     /** Drops the record, leaving the board as it stands. Expects boardLock. */
     void clearGameLocked();
 
+    //  ---- playing against them, message thread -----------------------------
+    /** The one place a stone is played onto the board. byHand records it in the
+        sequence an opening is read from - their answers are recorded too, so the
+        first ten moves of a game can become an opening like any other ten. */
+    go::MoveResult playMove (int idx, go::Stone colour, bool byHand);
+
+    /** Starts a match: takes the board off whatever had it, and empties it. */
+    void startMatch();
+
+    /** Ends the match and turns the switch off, so it tells the truth. Does
+        nothing if there is no match. */
+    void releaseMatch();
+
+    /** Answers your move. Reads the board under the lock, thinks outside it -
+        they are a pure function of the position and take tens of microseconds -
+        then plays what they chose. */
+    void playOpponentReply();
+
     /** Keeps Stone Life below Wave Gap while Wave Replay is on, so a reset
         is always something a stone would otherwise have missed. Message
         thread only (routed there via handleAsyncUpdate, since the parameter
@@ -460,6 +525,10 @@ private:
 
     std::array<std::atomic<std::uint8_t>, go::maxCells> stones {};
     std::atomic<int> prisonersBlack { 0 }, prisonersWhite { 0 }, lastMoveIndex { -1 };
+
+    //  counts every publishBoard(), so a view can tell the board has changed
+    //  without comparing 361 points - see boardChangeCount()
+    std::atomic<unsigned> boardChanges { 0 };
     std::atomic<int> step { 0 };
     std::atomic<int> activeSize { 9 };
     std::atomic<int> gameMoveTotal { 0 }, gamePositionMirror { 0 };
@@ -530,6 +599,9 @@ private:
     juce::AudioParameterInt*    aiSeedParam      = nullptr;
     juce::AudioParameterChoice* aiPlayersParam   = nullptr;
 
+    juce::AudioParameterBool*   aiOpponentParam       = nullptr;
+    juce::AudioParameterChoice* aiOpponentColourParam = nullptr;
+
     //  re-entrancy guard: clampStoneLifeToWaveGap() sets stoneLifeParam,
     //  which would otherwise trigger parameterChanged() straight back into it
     bool clampingWaveParams = false;
@@ -537,17 +609,33 @@ private:
     //  the same, for releaseAiSelfPlay() writing aiPlayParam
     bool settingAiPlayParam = false;
 
+    //  and again, for releaseMatch() writing aiOpponentParam
+    bool settingOpponentParam = false;
+
     //  true while the record on the board is one the players wrote, which is
     //  what tells the audio thread it may swap the next game in at the wrap
     std::atomic<bool> aiActive { false };
     std::atomic<int>  aiGameCounter { 0 };
     std::atomic<unsigned int> aiSeedShown { 0 };
 
+    //  a match: the switch, whether both sides have passed, and how many passes
+    //  there have been in a row. Mirrored as atomics because the board view and
+    //  the controller's redraw both read them without the lock.
+    std::atomic<bool> matchOn     { false };
+    std::atomic<bool> matchOver   { false };
+    std::atomic<int>  matchPasses { 0 };
+
+    //  kept between replies rather than built for each one: it is some 30 KB,
+    //  and an answer that allocates is an answer that can stutter
+    goai::ReadingWorkspace matchWorkspace;
+
     std::atomic<bool> pendingBoardSizeChange { false };
     std::atomic<bool> pendingWaveClamp       { false };
     std::atomic<bool> pendingAiRestart       { false };
     std::atomic<bool> pendingAiPrepare       { false };
     std::atomic<bool> pendingPortReopen      { false };
+    std::atomic<bool> pendingMatchChange     { false };
+    std::atomic<bool> pendingOpponentReply   { false };
 
     //  the notes' second way out, besides the host - see setMidiOutPort()
     MidiPortOut portOut;

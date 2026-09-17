@@ -50,6 +50,12 @@ juce::StringArray GoSequencerProcessor::aiPlayersNames()
     return { "Classic", "Reading" };
 }
 
+juce::StringArray GoSequencerProcessor::aiOpponentColourNames()
+{
+    //  the colour they answer with, so the other one is the colour you place
+    return { "White", "Black" };
+}
+
 namespace
 {
     //  the MIDI out port is named in the state rather than by a parameter: it
@@ -200,6 +206,15 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "aiPlayers", 1 }, "AI Players",
                                                         aiPlayersNames(), 1));
 
+    //  ---- playing against them ---------------------------------------------
+    //  The same pair, the same Variation and the same Seed: this switch only
+    //  changes whether they write a whole game or answer yours a move at a time.
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "aiOpponent", 1 }, "AI Opponent", false));
+
+    //  they take white by default, so the opening move is yours
+    layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "aiOpponentColour", 1 }, "Opponent Plays",
+                                                        aiOpponentColourNames(), 0));
+
     return layout;
 }
 
@@ -236,6 +251,9 @@ GoSequencerProcessor::GoSequencerProcessor()
     aiSeedParam      = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("aiSeed"));
     aiPlayersParam   = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("aiPlayers"));
 
+    aiOpponentParam       = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("aiOpponent"));
+    aiOpponentColourParam = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("aiOpponentColour"));
+
     for (int h = 0; h < maxHeadChannels; ++h)
         headChannel[(size_t) h] = dynamic_cast<juce::AudioParameterInt*>
                                     (apvts.getParameter ("headChannel" + juce::String (h + 1)));
@@ -261,6 +279,8 @@ GoSequencerProcessor::GoSequencerProcessor()
     apvts.addParameterListener ("aiVariation", this);
     apvts.addParameterListener ("aiSeed", this);
     apvts.addParameterListener ("aiPlayers", this);
+    apvts.addParameterListener ("aiOpponent", this);
+    apvts.addParameterListener ("aiOpponentColour", this);
 
     publishBoard();
 }
@@ -276,6 +296,8 @@ GoSequencerProcessor::~GoSequencerProcessor()
     apvts.removeParameterListener ("aiVariation", this);
     apvts.removeParameterListener ("aiSeed", this);
     apvts.removeParameterListener ("aiPlayers", this);
+    apvts.removeParameterListener ("aiOpponent", this);
+    apvts.removeParameterListener ("aiOpponentColour", this);
     cancelPendingUpdate();
 }
 
@@ -484,10 +506,17 @@ void GoSequencerProcessor::publishBoard()
     prisonersBlack.store (board.capturedBlack(), std::memory_order_relaxed);
     prisonersWhite.store (board.capturedWhite(), std::memory_order_relaxed);
     lastMoveIndex.store (board.lastMove(), std::memory_order_relaxed);
+
+    boardChanges.fetch_add (1, std::memory_order_relaxed);
 }
 
 go::Stone GoSequencerProcessor::colourForNextMove() const noexcept
 {
+    //  in a match the colours simply alternate, whatever Place is set to: a game
+    //  has no room for an opinion about whose turn it is
+    if (matchActive())
+        return (go::Stone) nextAlternating.load (std::memory_order_relaxed);
+
     switch (colourModeParam != nullptr ? colourModeParam->getIndex() : 0)
     {
         case 1:  return go::Stone::black;
@@ -498,9 +527,8 @@ go::Stone GoSequencerProcessor::colourForNextMove() const noexcept
     return (go::Stone) nextAlternating.load (std::memory_order_relaxed);
 }
 
-go::MoveResult GoSequencerProcessor::placeStone (int idx)
+go::MoveResult GoSequencerProcessor::playMove (int idx, go::Stone colour, bool byHand)
 {
-    const auto colour = colourForNextMove();
     const bool allowSuicide = selfCaptureParam != nullptr && selfCaptureParam->get();
     const bool applyKo      = koRuleParam      != nullptr && koRuleParam->get();
 
@@ -517,12 +545,39 @@ go::MoveResult GoSequencerProcessor::placeStone (int idx)
     if (result == go::MoveResult::ok)
     {
         //  an opening is a sequence, and this is the only place one is played:
-        //  the board itself keeps no order, so it is kept here
-        if ((int) handPlayed.size() < 256)
+        //  the board itself keeps no order, so it is kept here. Their answers
+        //  count too - ten moves of a game are ten moves, whoever played them.
+        if (byHand && (int) handPlayed.size() < 256)
             handPlayed.push_back ({ colour, idx, false });
 
-        if (colourModeParam == nullptr || colourModeParam->getIndex() == 0)
+        //  a move is an answer, so a pass no longer stands
+        matchPasses.store (0, std::memory_order_relaxed);
+
+        if (matchActive() || colourModeParam == nullptr || colourModeParam->getIndex() == 0)
             nextAlternating.store ((int) go::other (colour), std::memory_order_relaxed);
+    }
+
+    return result;
+}
+
+go::MoveResult GoSequencerProcessor::placeStone (int idx)
+{
+    //  In a game, only on your own move. The colours simply alternate there, so
+    //  a press while they are to play would place their stone for them. Refused
+    //  here, the one place a press becomes a stone, so no surface can get it
+    //  wrong - outOfRange being the refusal that is not a rule of Go.
+    if (matchActive() && ! yourTurn())
+        return go::MoveResult::outOfRange;
+
+    const auto result = playMove (idx, colourForNextMove(), true);
+
+    //  their answer is asked for rather than played here, so your stone is on
+    //  the board before they start reading - one turn of the message loop, which
+    //  is a frame, not a wait
+    if (result == go::MoveResult::ok && matchActive() && ! matchIsOver())
+    {
+        pendingOpponentReply.store (true, std::memory_order_relaxed);
+        triggerAsyncUpdate();
     }
 
     return result;
@@ -530,6 +585,9 @@ go::MoveResult GoSequencerProcessor::placeStone (int idx)
 
 void GoSequencerProcessor::eraseStone (int idx)
 {
+    if (! eraseAllowed())
+        return;             //  see eraseAllowed(): a match's position is its record
+
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
 
@@ -562,6 +620,10 @@ void GoSequencerProcessor::clearBoard()
 
     handPlayed.clear();
     nextAlternating.store ((int) go::Stone::black, std::memory_order_relaxed);
+
+    //  an empty board is the start of a game, not the end of one
+    matchPasses.store (0, std::memory_order_relaxed);
+    matchOver.store (false, std::memory_order_relaxed);
 }
 
 //==============================================================================
@@ -581,6 +643,11 @@ void GoSequencerProcessor::parameterChanged (const juce::String& parameterID, fl
     {
         pendingAiRestart.store (true, std::memory_order_relaxed);
         triggerAsyncUpdate();       //  generating a game allocates: not here
+    }
+    else if (parameterID == "aiOpponent" || parameterID == "aiOpponentColour")
+    {
+        pendingMatchChange.store (true, std::memory_order_relaxed);
+        triggerAsyncUpdate();       //  starting a game empties the board: not here
     }
     else if (parameterID == "aiMoves" || parameterID == "aiVariation" || parameterID == "aiSeed"
               || parameterID == "aiPlayers")
@@ -615,6 +682,20 @@ void GoSequencerProcessor::handleAsyncUpdate()
         prepareNextAiGame();
 
     //  a restored session names its port, and opening one belongs here
+    if (pendingMatchChange.exchange (false, std::memory_order_relaxed))
+    {
+        const bool wanted = aiOpponentParam != nullptr && aiOpponentParam->get();
+
+        if (wanted && ! matchActive())      startMatch();
+        else if (! wanted && matchActive()) releaseMatch();
+        else if (wanted)                    newMatch();     //  they changed sides: start again
+    }
+
+    //  after the switch, so turning it on does not answer a move from the game
+    //  before it
+    if (pendingOpponentReply.exchange (false, std::memory_order_relaxed))
+        playOpponentReply();
+
     if (pendingPortReopen.exchange (false, std::memory_order_relaxed))
         portOut.setPort (midiOutPort());
 }
@@ -646,6 +727,10 @@ void GoSequencerProcessor::applyBoardSize (int newSize)
 {
     if (! go::isSupportedSize (newSize) || newSize == board.size())
         return;
+
+    //  a game cannot carry across a resize any more than a run can: the points
+    //  mean something else now, and the board is about to be cleared under it
+    releaseMatch();
 
     const bool dropGame = (gameMoveTotal.load (std::memory_order_relaxed) > 0 && game.size != newSize);
 
@@ -712,6 +797,7 @@ juce::String GoSequencerProcessor::loadSgfText (const juce::String& text, const 
     //  goes off with it - checked before anything is written, so a record that
     //  turns out to be unusable leaves a run untouched
     releaseAiSelfPlay();
+    releaseMatch();
 
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
@@ -904,6 +990,9 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
 
 void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
 {
+    //  a run writes the whole board, so a game in progress gives it up
+    releaseMatch();
+
     const int size = chosenBoardSize();
     const auto settings = aiSettingsFor (size, gameNumber);
 
@@ -998,6 +1087,141 @@ void GoSequencerProcessor::prepareNextAiGame()
 
     //  `next` now holds what aiNextGame held, and frees it here on the message
     //  thread - which is the whole point of swapping rather than assigning
+}
+
+//==============================================================================
+go::Stone GoSequencerProcessor::opponentColour() const noexcept
+{
+    //  the choice lists White first, so index 1 is the other one
+    return (aiOpponentColourParam != nullptr && aiOpponentColourParam->getIndex() == 1)
+             ? go::Stone::black
+             : go::Stone::white;
+}
+
+bool GoSequencerProcessor::yourTurn() const noexcept
+{
+    if (! matchActive() || matchIsOver())
+        return false;
+
+    return (go::Stone) nextAlternating.load (std::memory_order_relaxed) != opponentColour();
+}
+
+void GoSequencerProcessor::startMatch()
+{
+    //  a match owns the board, so whatever had it gives it up first
+    releaseAiSelfPlay();
+    clearGame();
+
+    if (gameRunParam != nullptr && gameRunParam->get())
+    {
+        gameRunParam->beginChangeGesture();
+        gameRunParam->setValueNotifyingHost (0.0f);
+        gameRunParam->endChangeGesture();
+    }
+
+    matchOn.store (true, std::memory_order_relaxed);
+
+    //  a game starts from an empty board: there is no sense in handing them a
+    //  position nobody played, and clearBoard() sets the rest of it straight
+    clearBoard();
+
+    //  black opens, whoever black is
+    if (opponentColour() == go::Stone::black)
+        playOpponentReply();
+}
+
+void GoSequencerProcessor::releaseMatch()
+{
+    if (! matchOn.exchange (false, std::memory_order_relaxed))
+        return;             //  nothing to end
+
+    matchOver.store (false, std::memory_order_relaxed);
+    matchPasses.store (0, std::memory_order_relaxed);
+
+    if (aiOpponentParam == nullptr || ! aiOpponentParam->get() || settingOpponentParam)
+        return;
+
+    settingOpponentParam = true;
+    aiOpponentParam->beginChangeGesture();
+    aiOpponentParam->setValueNotifyingHost (0.0f);
+    aiOpponentParam->endChangeGesture();
+    settingOpponentParam = false;
+}
+
+void GoSequencerProcessor::playOpponentReply()
+{
+    if (! matchActive() || matchIsOver())
+        return;
+
+    const auto colour = opponentColour();
+
+    if ((go::Stone) nextAlternating.load (std::memory_order_relaxed) != colour)
+        return;             //  not their turn: there is nothing to answer
+
+    //  A copy to read, so the audio thread is not kept waiting while they think.
+    //  During a match nothing else writes to the board - a record cannot be
+    //  advancing under it - so the position cannot move out from under this.
+    go::Board position { 9 };
+
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+        position = board;
+    }
+
+    const auto settings = aiSettingsFor (position.size(), 0);
+
+    //  a seed that moves with the game, so a match plays out the same way twice
+    //  without one answer depending on how long the last one took
+    goai::Rng rng { goai::gameSeed (settings.seed, position.stoneCount()) };
+
+    for (int i = 0; i < 8; ++i)     // xorshift takes a moment to leave a small seed behind
+        rng.next();
+
+    const bool black = (colour == go::Stone::black);
+
+    const int idx = settings.players == goai::Players::reading
+        ? goai::chooseReadingMove (position, colour, position.lastMove(),
+                                   black ? settings.readingBlack : settings.readingWhite,
+                                   settings.variation, rng, matchWorkspace)
+        : goai::chooseMove (position, colour, position.lastMove(),
+                            black ? settings.black : settings.white,
+                            settings.variation, rng);
+
+    if (idx >= 0 && playMove (idx, colour, true) == go::MoveResult::ok)
+        return;
+
+    //  nothing left worth playing, or the rules refused what they chose: they
+    //  pass, and two passes in a row end the game
+    if (matchPasses.fetch_add (1, std::memory_order_relaxed) + 1 >= 2)
+        matchOver.store (true, std::memory_order_relaxed);
+
+    nextAlternating.store ((int) go::other (colour), std::memory_order_relaxed);
+}
+
+void GoSequencerProcessor::passMove()
+{
+    if (! yourTurn())
+        return;
+
+    if (matchPasses.fetch_add (1, std::memory_order_relaxed) + 1 >= 2)
+    {
+        matchOver.store (true, std::memory_order_relaxed);
+        return;
+    }
+
+    nextAlternating.store ((int) opponentColour(), std::memory_order_relaxed);
+    playOpponentReply();
+}
+
+void GoSequencerProcessor::newMatch()
+{
+    if (! matchActive())
+        return;
+
+    clearBoard();
+
+    if (opponentColour() == go::Stone::black)
+        playOpponentReply();
 }
 
 void GoSequencerProcessor::swapInNextAiGameLocked()
@@ -1537,6 +1761,12 @@ void GoSequencerProcessor::getStateInformation (juce::MemoryBlock& destData)
     }
 
     xml->setAttribute ("nextColour", nextAlternating.load (std::memory_order_relaxed));
+
+    //  whose turn it is rides in nextColour already; this is the one thing a
+    //  game in progress knows that the position does not say - that someone has
+    //  just passed, and one more pass ends it
+    xml->setAttribute ("matchPasses", matchPasses.load (std::memory_order_relaxed));
+
     copyXmlToBinary (*xml, destData);
 }
 
@@ -1554,6 +1784,7 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     const auto savedOpening = xml->getStringAttribute ("aiOpening");
     const int savedOpeningSize = xml->getIntAttribute ("aiOpeningSize", 0);
     const int nextColour  = xml->getIntAttribute ("nextColour", (int) go::Stone::black);
+    const int savedPasses = xml->getIntAttribute ("matchPasses", 0);
     const auto sgfName    = xml->getStringAttribute ("sgfName");
 
     juce::String savedSgf;
@@ -1651,8 +1882,23 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
         setGamePosition (position);
     }
 
+    //  A saved game comes back as it stood, which takes some care. The switch is
+    //  a parameter, so replaceState() above has already set it - and its listener
+    //  has already asked for a match to be started. That must not be allowed to
+    //  happen: starting one empties the board, and the board it would empty is
+    //  the one this session has just restored. So the switch is taken up here
+    //  directly, and the request it made is dropped with the others below.
+    const bool wantsMatch = aiOpponentParam != nullptr && aiOpponentParam->get()
+                              && (aiPlayParam == nullptr || ! aiPlayParam->get());
+
+    matchOn.store (wantsMatch, std::memory_order_relaxed);
+    matchPasses.store (juce::jlimit (0, 2, savedPasses), std::memory_order_relaxed);
+    matchOver.store (wantsMatch && savedPasses >= 2, std::memory_order_relaxed);
+
     pendingAiRestart.store (false, std::memory_order_relaxed);
     pendingAiPrepare.store (false, std::memory_order_relaxed);
+    pendingMatchChange.store (false, std::memory_order_relaxed);
+    pendingOpponentReply.store (false, std::memory_order_relaxed);
 
     cancelPendingUpdate();      //  the size is already where the state wants it
 

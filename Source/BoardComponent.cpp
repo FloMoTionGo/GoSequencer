@@ -88,6 +88,16 @@ void BoardComponent::timerCallback()
         needsRepaint = true;
     }
 
+    //  a stone placed by anything but a click on this view - a Launchpad pad,
+    //  the players' answer - would otherwise not show until the next step
+    const auto boardChanges = processor.boardChangeCount();
+
+    if (boardChanges != lastDrawnBoardChanges)
+    {
+        lastDrawnBoardChanges = boardChanges;
+        needsRepaint = true;
+    }
+
     if (flashAlpha > 0.0f)
     {
         flashAlpha = juce::jmax (0.0f, flashAlpha - 0.06f);
@@ -133,7 +143,36 @@ void BoardComponent::mouseDown (const juce::MouseEvent& e)
 
     if (wantsErase || processor.stoneAt (idx) != go::Stone::none)
     {
+        //  the eraser is not a thing you may use in a game: the position is the
+        //  record of it, and lifting a move back out would make it another game
+        if (! processor.eraseAllowed())
+        {
+            flashIndex = idx;
+            flashAlpha = 1.0f;
+
+            if (onMessage != nullptr)
+                onMessage ("a game is on: a move cannot be taken back out of it");
+
+            repaint();
+            return;
+        }
+
         processor.eraseStone (idx);
+        repaint();
+        return;
+    }
+
+    //  in a game the board waits for them as well as for you - the processor
+    //  refuses the move either way, but this is where it can say why
+    if (processor.matchActive() && ! processor.yourTurn())
+    {
+        flashIndex = idx;
+        flashAlpha = 1.0f;
+
+        if (onMessage != nullptr)
+            onMessage (processor.matchIsOver() ? "the game is over - New game starts another"
+                                               : "their move");
+
         repaint();
         return;
     }

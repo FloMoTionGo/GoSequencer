@@ -121,6 +121,7 @@ private:
     bool showPath = true;
     int lastDrawnStep = -1;
     int lastDrawnMove = -1;
+    unsigned lastDrawnBoardChanges = 0;
     int hoverIndex = -1;
     int flashIndex = -1;
     float flashAlpha = 0.0f;

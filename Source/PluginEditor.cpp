@@ -512,6 +512,34 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
 
     setUpText (aiTab, openingLabel, juce::Justification::topLeft);
 
+    //  ---- playing against them ---------------------------------------------
+    //  The same pair, answering a move at a time instead of writing a whole
+    //  game. It owns the board while it is on, so the processor turns self-play
+    //  and Run Game off rather than let two things write to the same stones.
+    setUpToggle (aiTab, aiOpponentButton, "Play against", "aiOpponent", aiOpponentAttachment);
+
+    setUpCombo  (aiTab, aiOpponentBox, aiOpponentCaption, "they play",
+                 GoSequencerProcessor::aiOpponentColourNames(), "aiOpponentColour",
+                 aiOpponentColourAttachment);
+
+    setUpButton (aiTab, passButton, "Pass", [this]
+    {
+        processor.passMove();
+        board.repaint();
+        refreshMatchDisplay();
+    });
+
+    setUpButton (aiTab, newMatchButton, "New game", [this]
+    {
+        processor.newMatch();
+        board.repaint();
+        refreshMatchDisplay();
+        showMessage ("a new game, from an empty board");
+    });
+
+    setUpText (aiTab, matchLabel, juce::Justification::topLeft);
+
+    refreshMatchDisplay();
     refreshOpeningDisplay();
     refreshGameDisplay();
 
@@ -576,6 +604,7 @@ void GoSequencerEditor::setDarkMode (bool dark)
     refreshOpeningDisplay();
     refreshGameDisplay();
     refreshPortStatus();
+    refreshMatchDisplay();
 
     processor.apvts.state.setProperty (darkModeProperty, dark, nullptr);
 
@@ -778,6 +807,34 @@ void GoSequencerEditor::refreshPortStatus()
                                (wanted.isNotEmpty() && ! open) ? theme::accent : theme::dimText);
 
     lastPortOpenShown = open;
+}
+
+void GoSequencerEditor::refreshMatchDisplay()
+{
+    const bool on   = processor.matchActive();
+    const bool over = on && processor.matchIsOver();
+
+    //  their colour stays choosable with no game on, so it can be set before one
+    //  starts - changing it during a game starts that game again
+    passButton.setEnabled (on && processor.yourTurn());
+    newMatchButton.setEnabled (on);
+
+    juce::String line;
+
+    if (! on)
+        line = "off - the board is yours to place on";
+    else if (over)
+        line = "both passed - " + juce::String (processor.capturedBlack()) + " black and "
+             + juce::String (processor.capturedWhite()) + " white taken";
+    else if (processor.yourTurn())
+        line = juce::String ("your move - you are ")
+             + (processor.yourColour() == go::Stone::black ? "black" : "white")
+             + (processor.passCount() == 1 ? ", and a pass stands: pass again to end it" : "");
+    else
+        line = "their move";
+
+    matchLabel.setText (line, juce::dontSendNotification);
+    matchLabel.setColour (juce::Label::textColourId, over ? theme::accent : theme::dimText);
 }
 
 //==============================================================================
@@ -987,6 +1044,16 @@ void GoSequencerEditor::resized()
         }
 
         openingLabel.setBounds (rows.removeFromTop (textLinesHeight));
+
+        //  playing against them: the switch and which colour they take, then the
+        //  two buttons a game needs, and under them whose move it is
+        cells = columns (nextRow (rows, cellHeight), 2);
+        placeControl (cells[0], aiOpponentButton);
+        placeLabelled (cells[1], aiOpponentCaption, aiOpponentBox);
+
+        flow (nextRow (rows, controlHeight), { &passButton, &newMatchButton });
+
+        matchLabel.setBounds (rows.removeFromTop (textLinesHeight));
     }
 }
 
@@ -1065,6 +1132,21 @@ void GoSequencerEditor::timerCallback()
 
         if (line != lastOpeningShown)
             refreshOpeningDisplay();
+    }
+
+    //  their answer lands with nothing clicked, and so does the end of a game,
+    //  so whose move it is is read back here rather than only after a button
+    {
+        const int turn = ! processor.matchActive() ? -1
+                       : processor.matchIsOver()   ?  2
+                       : processor.yourTurn()      ?  0 : 1;
+
+        if (turn != lastTurnShown)
+        {
+            lastTurnShown = turn;
+            refreshMatchDisplay();
+            board.repaint();
+        }
     }
 
     //  a port can open or go away with nothing clicked - loopMIDI started or

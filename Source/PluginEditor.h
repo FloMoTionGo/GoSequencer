@@ -127,7 +127,8 @@ private:
     //  colour is a copy, so a scheme change has to walk this list and re-set it
     std::vector<juce::Label*> dimLabels;
 
-    juce::ComboBox rateBox, colourBox, sizeBox, gameRateBox, modeBox, lifeModeBox, aiPlayersBox;
+    juce::ComboBox rateBox, colourBox, sizeBox, gameRateBox, modeBox, lifeModeBox, aiPlayersBox,
+                   aiOpponentBox;
     juce::Slider noteSlider, gateSlider, tempoSlider,
                  blackVelocitySlider, whiteVelocitySlider,
                  spreadSlider, lifeSlider,
@@ -142,15 +143,17 @@ private:
     juce::TextButton freeRunButton, koButton, selfCaptureButton, pathButton, clearButton,
                      loadButton, runGameButton, loopGameButton, unloadButton,
                      previousMoveButton, nextMoveButton, waveReplayButton,
-                     aiPlayButton, openingFromBoardButton, openingBookButton;
+                     aiPlayButton, openingFromBoardButton, openingBookButton,
+                     aiOpponentButton, passButton, newMatchButton;
 
     juce::Label rateCaption, noteCaption, gateCaption, tempoCaption,
                 blackVelocityCaption, whiteVelocityCaption,
                 blackChannelCaption, whiteChannelCaption,
                 modeCaption, spreadCaption, lifeCaption, lifeModeCaption,
                 colourCaption, sizeCaption, gameRateCaption, moveCaption, waveGapCaption,
-                aiPlayersCaption, aiMovesCaption, aiVariationCaption, aiSeedCaption, openingCaption;
-    juce::Label hintLabel, gameTitleLabel, gameDetailLabel, openingLabel;
+                aiPlayersCaption, aiMovesCaption, aiVariationCaption, aiSeedCaption, openingCaption,
+                aiOpponentCaption;
+    juce::Label hintLabel, gameTitleLabel, gameDetailLabel, openingLabel, matchLabel;
 
     std::unique_ptr<SliderAttachment>   noteAttachment, gateAttachment, tempoAttachment,
                                         blackVelocityAttachment, whiteVelocityAttachment,
@@ -160,10 +163,11 @@ private:
                                         aiMovesAttachment, aiVariationAttachment, aiSeedAttachment;
     std::array<std::unique_ptr<SliderAttachment>, (size_t) headChannels> headChannelAttachments;
     std::unique_ptr<ComboBoxAttachment> rateAttachment, colourAttachment, sizeAttachment, gameRateAttachment,
-                                        modeAttachment, lifeModeAttachment, aiPlayersAttachment;
+                                        modeAttachment, lifeModeAttachment, aiPlayersAttachment,
+                                        aiOpponentColourAttachment;
     std::unique_ptr<ButtonAttachment>   freeRunAttachment, koAttachment, selfCaptureAttachment,
                                         runGameAttachment, loopGameAttachment, waveReplayAttachment,
-                                        aiPlayAttachment;
+                                        aiPlayAttachment, aiOpponentAttachment;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::File lastSgfDirectory;
@@ -186,6 +190,13 @@ private:
     void refreshOpeningDisplay();
 
     juce::String lastOpeningShown;
+
+    /** The line saying whose move it is, and the enables that go with it. Their
+        answer lands with nothing clicked, so this is re-read from the tick:
+        lastTurnShown is -1 for no game, 0 yours, 1 theirs, 2 finished. */
+    void refreshMatchDisplay();
+
+    int lastTurnShown = -2;
 
     /** The MIDI out port dropdown, filled from the ports there are right now,
         and the line under it saying whether the chosen one is open - re-read
