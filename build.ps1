@@ -40,10 +40,12 @@ if (Test-Path $tests) {
 }
 
 $artefacts = Join-Path $build "GoSequencer_artefacts\$Config"
-$vst3      = Join-Path $artefacts "VST3\Go Sequencer.vst3"
+$vst3       = Join-Path $artefacts "VST3\GoSequencer.vst3"
+$standalone = Join-Path $artefacts "Standalone\GoSequencer.exe"
 
 Write-Host ""
 Write-Host "VST3:       $vst3"
+Write-Host "Standalone: $standalone"
 
 if ($Install) {
     $targets = @(

@@ -27,12 +27,21 @@ add_subdirectory("${JUCE_PATH}" JUCE)
 # effect: that is the shape hosts route MIDI out of (in Live, the receiving
 # track picks "MIDI From > Go Sequencer's track > Go Sequencer").
 juce_add_plugin(GoSequencer
-    PRODUCT_NAME "Go Sequencer"
+    # The files the build writes carry no spaces (GoSequencer.exe,
+    # GoSequencer.vst3); hosts and the window title still show the plugin's
+    # name with one. Hosts find a saved plugin by its codes below, not by
+    # either name, so sessions saved before the rename still load.
+    PRODUCT_NAME "GoSequencer"
+    PLUGIN_NAME "Go Sequencer"
     COMPANY_NAME "Florian Motz"
     BUNDLE_ID "com.florianmotz.gosequencer"
     PLUGIN_MANUFACTURER_CODE Flmz
     PLUGIN_CODE Gseq
-    FORMATS VST3
+    # Standalone is built alongside the VST3 for the sake of the hardware
+    # controller: talking to a Launchpad means watching real pads light up, and
+    # a standalone window opens in a second where a host takes a minute. It
+    # changes nothing about the VST3 that gets shipped.
+    FORMATS VST3 Standalone
     IS_SYNTH TRUE
     NEEDS_MIDI_INPUT TRUE
     NEEDS_MIDI_OUTPUT TRUE
