@@ -496,10 +496,6 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setUpToggle (boardTab, koButton, "Ko rule", "koRule", koAttachment);
     setUpToggle (boardTab, selfCaptureButton, "Self capture", "selfCapture", selfCaptureAttachment);
 
-    pathButton.setClickingTogglesState (true);
-    pathButton.setToggleState (board.getShowPath(), juce::dontSendNotification);
-    setUpButton (boardTab, pathButton, "Show path", [this] { board.setShowPath (pathButton.getToggleState()); });
-
     setUpButton (boardTab, clearButton, "Clear board", [this]
     {
         processor.clearBoard();
@@ -802,7 +798,7 @@ void GoSequencerEditor::setDarkMode (bool dark)
     processor.apvts.state.setProperty (darkModeProperty, dark, nullptr);
 
     sendLookAndFeelChange();
-    board.repaint();
+    board.refreshAll();         //  the grid is a cached image in the old colours
     repaint();
 }
 
@@ -1277,7 +1273,7 @@ void GoSequencerEditor::resized()
     {
         auto rows = column;
 
-        flow (nextRow (rows, controlHeight), { &koButton, &selfCaptureButton, &pathButton, &clearButton });
+        flow (nextRow (rows, controlHeight), { &koButton, &selfCaptureButton, &clearButton });
         hintLabel.setBounds (rows.removeFromTop (textLinesHeight));
     }
 
@@ -1505,7 +1501,7 @@ void GoSequencerEditor::timerCallback()
         if (size != lastBoardSizeShown)
         {
             lastBoardSizeShown = size;
-            board.repaint();
+            board.refreshAll();
         }
 
         //  Listing the ports is a round trip to the system's MIDI service, slow
@@ -1530,7 +1526,15 @@ void GoSequencerEditor::timerCallback()
             moveSlider.setValue ((double) position, juce::dontSendNotification);
     }
 
-    repaint (headerBounds);
+    //  the header only when something in it reads differently, not on every tick
+    auto header = message.isNotEmpty() ? message : statusLine();
+    header << (processor.colourForNextMove() == go::Stone::black ? "|b" : "|w");
+
+    if (header != lastHeaderShown)
+    {
+        lastHeaderShown = header;
+        repaint (headerBounds);
+    }
 }
 
 void GoSequencerEditor::paint (juce::Graphics& g)
@@ -1561,29 +1565,8 @@ void GoSequencerEditor::paint (juce::Graphics& g)
     }
     else
     {
-        const juce::String dot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
-
-        const int steps = juce::jmax (1, processor.cycleSteps());
-        const int step = juce::jlimit (0, steps - 1, processor.currentStep());
-
-        juce::String status;
-        status << "step " << (step + 1) << "/" << steps;
-
-        if (processor.isQuads())
-            status << dot << "4 quadrants";
-        else if (processor.isPolyrhythm())
-            status << dot << processor.ringCount() << " rings";
-
-        status << dot << "captured  black " << processor.capturedBlack()
-               << "  white " << processor.capturedWhite();
-
-        if (processor.hasGame())
-            status << dot << "move " << processor.gamePosition() << "/" << processor.gameMoveCount();
-
-        status << dot << (processor.isRunning() ? "running" : "stopped");
-
         g.setColour (theme::dimText);
-        g.drawText (status, header, juce::Justification::centredLeft, true);
+        g.drawText (statusLine(), header, juce::Justification::centredLeft, true);
     }
 
     if (dragHighlight)
@@ -1591,4 +1574,29 @@ void GoSequencerEditor::paint (juce::Graphics& g)
         g.setColour (theme::accent);
         g.drawRect (getLocalBounds(), 2);
     }
+}
+
+juce::String GoSequencerEditor::statusLine() const
+{
+    const juce::String dot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
+
+    const int steps = juce::jmax (1, processor.cycleSteps());
+    const int step = juce::jlimit (0, steps - 1, processor.currentStep());
+
+    juce::String status;
+    status << "step " << (step + 1) << "/" << steps;
+
+    if (processor.isQuads())
+        status << dot << "4 quadrants";
+    else if (processor.isPolyrhythm())
+        status << dot << processor.ringCount() << " rings";
+
+    status << dot << "captured  black " << processor.capturedBlack()
+           << "  white " << processor.capturedWhite();
+
+    if (processor.hasGame())
+        status << dot << "move " << processor.gamePosition() << "/" << processor.gameMoveCount();
+
+    status << dot << (processor.isRunning() ? "running" : "stopped");
+    return status;
 }

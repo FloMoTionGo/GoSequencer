@@ -12,13 +12,33 @@ BoardComponent::BoardComponent (GoSequencerProcessor& p)
     : processor (p)
 {
     setWantsKeyboardFocus (false);
+
+    //  the grid is an image until something it shows changes; clicks go through
+    //  both layers to this component
+    grid.setBufferedToImage (true);
+    grid.setOpaque (true);
+
+    for (auto* layer : { (juce::Component*) &grid, (juce::Component*) &stones })
+    {
+        layer->setInterceptsMouseClicks (false, false);
+        addAndMakeVisible (layer);
+    }
+
+    rememberEverything();
     startTimerHz (30);
 }
 
-void BoardComponent::setShowPath (bool shouldShow)
+void BoardComponent::resized()
 {
-    showPath = shouldShow;
-    repaint();
+    grid.setBounds (getLocalBounds());      //  a new size draws the grid image again
+    stones.setBounds (getLocalBounds());
+}
+
+void BoardComponent::refreshAll()
+{
+    rememberEverything();
+    grid.repaint();
+    stones.repaint();
 }
 
 //==============================================================================
@@ -67,49 +87,131 @@ int BoardComponent::indexFor (juce::Point<float> p) const
     return pointFor (idx).getDistanceFrom (p) <= s * 0.55f ? idx : -1;
 }
 
+juce::Rectangle<int> BoardComponent::cellBounds (int idx) const
+{
+    //  the widest thing drawn on a point is the playhead ring round a stone:
+    //  1.06 spacings across plus its stroke
+    const float side = spacing() * 1.3f;
+    return juce::Rectangle<float> (side, side).withCentre (pointFor (idx)).getSmallestIntegerContainer().expanded (2);
+}
+
+void BoardComponent::repaintCell (int idx)
+{
+    if (idx >= 0 && idx < processor.stepCount())
+        stones.repaint (cellBounds (idx));
+}
+
+std::uint8_t BoardComponent::cellState (int idx) const noexcept
+{
+    const auto stone = processor.stoneAt (idx);
+
+    if (stone == go::Stone::none)
+        return 0;
+
+    return (std::uint8_t) ((int) stone
+                           | (processor.stoneIsSpent (idx) ? 4 : 0)
+                           | (processor.lastMove() == idx ? 8 : 0));
+}
+
+int BoardComponent::headCells (std::array<int, go::maxRings>& cells) const noexcept
+{
+    const int heads = juce::jmin (processor.headCount(), go::maxRings);
+
+    if (heads > 1)
+    {
+        for (int h = 0; h < heads; ++h)
+            cells[(size_t) h] = processor.headCellAt (h, processor.headPosition (h));
+
+        return heads;
+    }
+
+    const int stepIndex = juce::jlimit (0, juce::jmax (0, processor.stepCount() - 1), processor.currentStep());
+    cells[0] = processor.spiralAt (stepIndex);
+    return 1;
+}
+
+void BoardComponent::rememberEverything()
+{
+    drawnSize = size();
+    drawnDark = theme::isDark;
+    drawnRunning = processor.isRunning();
+    drawnHeadCount = headCells (drawnHeads);
+    drawnHoverColour = processor.colourForNextMove();
+
+    for (int i = 0; i < go::maxCells; ++i)
+        drawnCells[(size_t) i] = i < processor.stepCount() ? cellState (i) : 0;
+}
+
 //==============================================================================
 void BoardComponent::timerCallback()
 {
-    bool needsRepaint = false;
-
-    const int currentStep = processor.currentStep();
-
-    if (currentStep != lastDrawnStep)
+    //  a new board or colour scheme: nothing on screen is right any more. Normally
+    //  the editor says so through refreshAll; this catches anything that does not.
+    if (size() != drawnSize || theme::isDark != drawnDark)
     {
-        lastDrawnStep = currentStep;
-        needsRepaint = true;
+        refreshAll();
+        return;
     }
 
-    const int gameMove = processor.gamePosition();
+    //  Stones: whatever put them there - the record, a pad, the players' answer,
+    //  a stone running out of life - shows up as a point that reads differently.
+    const int cells = processor.stepCount();
 
-    if (gameMove != lastDrawnMove)
+    for (int i = 0; i < cells; ++i)
     {
-        lastDrawnMove = gameMove;
-        needsRepaint = true;
+        const auto state = cellState (i);
+
+        if (state != drawnCells[(size_t) i])
+        {
+            drawnCells[(size_t) i] = state;
+            repaintCell (i);
+        }
     }
 
-    //  a stone placed by anything but a click on this view - a Launchpad pad,
-    //  the players' answer - would otherwise not show until the next step
-    const auto boardChanges = processor.boardChangeCount();
+    //  Playheads: where each one left and where it is now. Starting or stopping
+    //  changes how bright they all are, and a mode change how many there are.
+    std::array<int, go::maxRings> heads {};
+    const int headCount = headCells (heads);
+    const bool running = processor.isRunning();
 
-    if (boardChanges != lastDrawnBoardChanges)
+    if (headCount != drawnHeadCount || running != drawnRunning)
     {
-        lastDrawnBoardChanges = boardChanges;
-        needsRepaint = true;
+        for (int h = 0; h < drawnHeadCount; ++h) repaintCell (drawnHeads[(size_t) h]);
+        for (int h = 0; h < headCount; ++h)      repaintCell (heads[(size_t) h]);
+    }
+    else
+    {
+        for (int h = 0; h < headCount; ++h)
+        {
+            if (heads[(size_t) h] != drawnHeads[(size_t) h])
+            {
+                repaintCell (drawnHeads[(size_t) h]);
+                repaintCell (heads[(size_t) h]);
+            }
+        }
+    }
+
+    drawnHeads = heads;
+    drawnHeadCount = headCount;
+    drawnRunning = running;
+
+    //  the ghost under the cursor is the colour the next stone will be
+    const auto hoverColour = processor.colourForNextMove();
+
+    if (hoverColour != drawnHoverColour)
+    {
+        drawnHoverColour = hoverColour;
+        repaintCell (hoverIndex);
     }
 
     if (flashAlpha > 0.0f)
     {
         flashAlpha = juce::jmax (0.0f, flashAlpha - 0.06f);
+        repaintCell (flashIndex);
 
         if (flashAlpha <= 0.0f)
             flashIndex = -1;
-
-        needsRepaint = true;
     }
-
-    if (needsRepaint)
-        repaint();
 }
 
 void BoardComponent::mouseMove (const juce::MouseEvent& e)
@@ -118,8 +220,9 @@ void BoardComponent::mouseMove (const juce::MouseEvent& e)
 
     if (idx != hoverIndex)
     {
+        repaintCell (hoverIndex);
         hoverIndex = idx;
-        repaint();
+        repaintCell (hoverIndex);
     }
 }
 
@@ -127,8 +230,8 @@ void BoardComponent::mouseExit (const juce::MouseEvent&)
 {
     if (hoverIndex >= 0)
     {
+        repaintCell (hoverIndex);
         hoverIndex = -1;
-        repaint();
     }
 }
 
@@ -153,12 +256,12 @@ void BoardComponent::mouseDown (const juce::MouseEvent& e)
             if (onMessage != nullptr)
                 onMessage ("a game is on: a move cannot be taken back out of it");
 
-            repaint();
+            stones.repaint();
             return;
         }
 
         processor.eraseStone (idx);
-        repaint();
+        stones.repaint();
         return;
     }
 
@@ -173,7 +276,7 @@ void BoardComponent::mouseDown (const juce::MouseEvent& e)
             onMessage (processor.matchIsOver() ? "the game is over - New game starts another"
                                                : "their move");
 
-        repaint();
+        stones.repaint();
         return;
     }
 
@@ -207,26 +310,28 @@ void BoardComponent::mouseDown (const juce::MouseEvent& e)
         onMessage ({});
     }
 
-    repaint();
+    stones.repaint();
 }
 
 //==============================================================================
-void BoardComponent::paint (juce::Graphics& g)
+void BoardComponent::GridLayer::paint (juce::Graphics& g)
 {
-    paintSurface (g);
-    paintGrid (g);
+    //  opaque, so a cell repainted above it never reaches the editor behind
+    g.fillAll (theme::background);
+    owner.paintSurface (g);
+    owner.paintGrid (g);
+}
 
-    if (showPath)
-        paintPath (g);
+void BoardComponent::StoneLayer::paint (juce::Graphics& g)
+{
+    owner.paintStones (g);
+    owner.paintPlayhead (g);
 
-    paintStones (g);
-    paintPlayhead (g);
-
-    if (flashIndex >= 0 && flashAlpha > 0.0f)
+    if (owner.flashIndex >= 0 && owner.flashAlpha > 0.0f)
     {
-        const float r = spacing() * 0.5f;
-        g.setColour (theme::error.withAlpha (flashAlpha));
-        g.drawEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (pointFor (flashIndex)), 2.0f);
+        const float r = owner.spacing() * 0.5f;
+        g.setColour (theme::error.withAlpha (owner.flashAlpha));
+        g.drawEllipse (juce::Rectangle<float> (r * 2.0f, r * 2.0f).withCentre (owner.pointFor (owner.flashIndex)), 2.0f);
     }
 }
 
@@ -287,92 +392,6 @@ void BoardComponent::paintGrid (juce::Graphics& g)
     }
 }
 
-void BoardComponent::paintPath (juce::Graphics& g)
-{
-    const float stroke = juce::jmax (1.0f, spacing() * 0.03f);
-    const float dot = juce::jmax (2.0f, spacing() * 0.09f);
-
-    auto strokeWalk = [&g, stroke] (const juce::Path& path)
-    {
-        g.setColour (theme::accent.withAlpha (0.28f));
-        g.strokePath (path, juce::PathStrokeType (stroke,
-                                                  juce::PathStrokeType::curved,
-                                                  juce::PathStrokeType::rounded));
-    };
-
-    auto markStart = [&g, dot] (juce::Point<float> where)
-    {
-        g.setColour (theme::accent.withAlpha (0.7f));
-        g.fillEllipse (juce::Rectangle<float> (dot * 2.0f, dot * 2.0f).withCentre (where));
-    };
-
-    if (processor.isQuads())
-    {
-        //  four spirals, one per quadrant, drawn where they actually run
-        const int steps = go::quadSteps (size());
-
-        for (int q = 0; q < go::quadCount; ++q)
-        {
-            juce::Path path;
-            path.startNewSubPath (pointFor (processor.quadCellAt (q, 0)));
-
-            for (int i = 1; i < steps; ++i)
-                path.lineTo (pointFor (processor.quadCellAt (q, i)));
-
-            strokeWalk (path);
-            markStart (pointFor (processor.quadCellAt (q, 0)));     //  where this quadrant's walk begins
-        }
-
-        return;
-    }
-
-    if (processor.isPolyrhythm())
-    {
-        //  the rings are dashed: they are laps, not a line to follow
-        const int n = size();
-        const float dashes[] = { stroke * 3.0f, stroke * 4.0f };
-
-        for (int r = 0; r < processor.ringCount(); ++r)
-        {
-            const auto topLeft     = pointFor (go::index (r, r, n));
-            const auto bottomRight = pointFor (go::index (n - 1 - r, n - 1 - r, n));
-
-            juce::Path ring, dashed;
-            ring.addRectangle (juce::Rectangle<float> (topLeft, bottomRight));
-            juce::PathStrokeType (stroke).createDashedStroke (dashed, ring, dashes, 2);
-
-            g.setColour (theme::accent.withAlpha (0.45f));
-            g.fillPath (dashed);
-
-            //  every ring starts at its own top left corner and runs clockwise
-            markStart (topLeft);
-        }
-
-        return;
-    }
-
-    const int steps = processor.stepCount();
-
-    juce::Path path;
-    path.startNewSubPath (pointFor (processor.spiralAt (0)));
-
-    for (int i = 1; i < steps; ++i)
-        path.lineTo (pointFor (processor.spiralAt (i)));
-
-    strokeWalk (path);
-
-    //  mark where the walk begins
-    const auto start = pointFor (processor.spiralAt (0));
-    const float r = spacing() * 0.22f;
-
-    juce::Path arrow;
-    arrow.addTriangle (start.x - r, start.y - r * 1.6f,
-                       start.x + r, start.y - r * 1.6f,
-                       start.x, start.y - r * 0.5f);
-    g.setColour (theme::accent.withAlpha (0.7f));
-    g.fillPath (arrow);
-}
-
 void BoardComponent::drawStone (juce::Graphics& g, juce::Point<float> centre, float radius,
                                 bool black, float alpha)
 {
@@ -401,11 +420,14 @@ void BoardComponent::paintStones (juce::Graphics& g)
         drawStone (g, pointFor (hoverIndex), radius,
                    processor.colourForNextMove() == go::Stone::black, 0.35f);
 
+    //  a repaint asks for a few cells at a time: the rest are left alone
+    const auto clip = g.getClipBounds();
+
     for (int i = 0; i < cells; ++i)
     {
         const auto stone = processor.stoneAt (i);
 
-        if (stone == go::Stone::none)
+        if (stone == go::Stone::none || ! clip.intersects (cellBounds (i)))
             continue;
 
         //  a spent stone is drawn like the one under the cursor: there, but ghosted
@@ -425,8 +447,13 @@ void BoardComponent::paintPlayhead (juce::Graphics& g)
 {
     const bool active = processor.isRunning();
 
-    auto drawHead = [this, &g, active] (int idx, float weight)
+    const auto clip = g.getClipBounds();
+
+    auto drawHead = [this, &g, active, clip] (int idx, float weight)
     {
+        if (! clip.intersects (cellBounds (idx)))
+            return;
+
         const auto centre = pointFor (idx);
         const float s = spacing();
 

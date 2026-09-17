@@ -22,7 +22,7 @@ deeper into *how* and *why* each feature behaves the way it does.
    - [Step rate, Note, Gate, Free Tempo](#step-rate-note-gate-free-tempo)
    - [Mode, Spread, Stone Life, Life Counts](#mode-spread-stone-life-life-counts)
    - [Board size, Place](#board-size-place)
-   - [Ko rule, Self capture, Free run, Show path, Clear board](#ko-rule-self-capture-free-run-show-path-clear-board)
+   - [Ko rule, Self capture, Free run, Clear board](#ko-rule-self-capture-free-run-clear-board)
 5. [The Channels tab](#5-the-channels-tab)
 6. [The Game and AI tabs](#6-the-game-and-ai-tabs)
    - [AI self-play](#ai-self-play)
@@ -70,7 +70,7 @@ On the right, top to bottom:
 - A row of six **tabs**, and under it the controls of the open one:
   - **Sequencer** — step rate, note, gate, playhead mode, stone life, free
     run and spread.
-  - **Board** — the rule switches, Show path, Clear board, and a reminder of
+  - **Board** — the rule switches, Clear board, and a reminder of
     how to interact with the board.
   - **Channels** — both velocities, every MIDI channel assignment, and the
     optional MIDI out port.
@@ -105,7 +105,7 @@ step 14/81  ·  captured  black 3  white 1  ·  stopped
 - `move N/total` — appears once a game record is loaded, showing position
   in the SGF.
 - `running` / `stopped` — whether the step clock is currently advancing
-  (see [Free run](#ko-rule-self-capture-free-run-show-path-clear-board)
+  (see [Free run](#ko-rule-self-capture-free-run-clear-board)
   below for what makes it run).
 
 Whenever you take an action that needs feedback — a captured/illegal move,
@@ -134,7 +134,7 @@ A stone you place is timestamped internally the moment it lands (see
 The **Sequencer** tab holds the clock and the pitch: step rate, note, gate,
 mode, stone life and life counts, free run and free tempo, and spread. The
 **Board** tab holds the rules and the board's own switches: Ko rule, Self
-capture, Show path and Clear board. **Board** size and **Place** are not on a
+capture and Clear board. **Board** size and **Place** are not on a
 tab at all — they sit under the board, since they decide what a click on it
 does.
 
@@ -182,7 +182,7 @@ These two sit under the board, not on a tab.
   black), or `White` (always plays white). The header swatch always shows
   the colour that's about to be placed.
 
-### Ko rule, Self capture, Free run, Show path, Clear board
+### Ko rule, Self capture, Free run, Clear board
 
 - **Ko rule** (default **on**) — forbids immediately recreating the board
   position that existed right before the previous move (the standard Go
@@ -201,9 +201,6 @@ These two sit under the board, not on a tab.
   next time it runs. With Free run **on**, the clock runs continuously
   regardless of the host transport — handy for auditioning the board
   without pressing play in your DAW.
-- **Show path** — toggles a faint line on the board tracing each
-  playhead's route (the spiral / ring / quadrant path it's following).
-  Good for understanding a mode before you commit stones to it.
 - **Clear board** — lifts every stone and resets capture counts. This does
   *not* unload a loaded game record; use **Unload** on the Game tab for
   that.

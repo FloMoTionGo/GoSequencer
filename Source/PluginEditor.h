@@ -123,6 +123,9 @@ private:
     void showMessage (const juce::String&);
     void refreshGameDisplay();
 
+    /** The header's status text: step, mode, captures, record position, transport. */
+    juce::String statusLine() const;
+
     /** The always-visible light/dark switch, top right of the header. */
     void setDarkMode (bool dark);
 
@@ -154,7 +157,7 @@ private:
     static constexpr int headChannels = GoSequencerProcessor::maxHeadChannels;
     std::array<juce::Slider, (size_t) headChannels> headChannelSliders;
     std::array<juce::Label,  (size_t) headChannels> headChannelCaptions;
-    juce::TextButton freeRunButton, koButton, selfCaptureButton, pathButton, clearButton,
+    juce::TextButton freeRunButton, koButton, selfCaptureButton, clearButton,
                      loadButton, runGameButton, loopGameButton, unloadButton,
                      previousMoveButton, nextMoveButton, waveReplayButton,
                      aiPlayButton, openingFromBoardButton, openingBookButton,
@@ -190,6 +193,7 @@ private:
     juce::String message;
     int messageCountdown = 0;
     int lastMoveShown = -1;
+    juce::String lastHeaderShown;
     int lastModeShown = -1;
     bool lastWaveReplayShown = false;
     bool dragHighlight = false;

@@ -177,8 +177,17 @@ Tabs are **hand-rolled**, not `juce::TabbedComponent`: `enum Tab` (`PluginEditor
 - `resized()` lays **every** tab into the same rectangle whether visible or not; each block opens
   `auto rows = column;` (`cpp:868-990`).
 - Control builders: `setUpCaption/Text/Slider/Combo/Toggle/Button` (`cpp:587-656`).
-- Timers: editor 20 Hz (`cpp:530`), `BoardComponent` 30 Hz polling `currentStep`/`gamePosition`
-  (`BoardComponent.cpp:71-103`). Nothing pushes; everything polls.
+- Timers: editor 20 Hz, `BoardComponent` 30 Hz (`BoardComponent::timerCallback`). Nothing pushes;
+  everything polls - and repaints only what changed: the editor header only when its text or the
+  next-stone colour reads differently.
+- **The board is two layers.** `GridLayer` (surface, lines, stars, coordinates) is opaque and
+  `setBufferedToImage` - drawn again only on resize or `refreshAll()`. `StoneLayer` is repainted
+  **cell by cell**: each tick compares a per-point snapshot (`cellState`: stone, spent, last move)
+  and the head cells with what was last drawn, and `repaintCell`s the differences; `paintStones` /
+  `paintPlayhead` skip cells outside the clip. A new colour scheme or board size must call
+  `board.refreshAll()` (the editor does, and the timer catches a missed size or scheme change).
+  Anything new drawn on a point must fit `cellBounds` and be part of `cellState`, or it will not be
+  repainted. There is no "Show path" any more - removed for performance (2026-09-17).
 - `RefreshingComboBox` (`PluginEditor.h:48-60`) re-reads a device list when its popup opens.
 - **All colours** live in `namespace theme` (`BoardComponent.h:11-76`), light and dark.
   `stoneBlack`/`stoneWhite` are `const` and fixed in both schemes.
@@ -244,8 +253,8 @@ generator, not an insert. Device-level input goes through `juce::MidiInput`, not
 - **Listing MIDI devices is slow** (≈55 ms per direction here). Never enumerate on a timer.
 - **Launchpad pulse/flash run on the device's own 2-beat clock** (1 s at 120 bpm) — far too slow for
   a playhead. Heads are held colours.
-- **`BoardComponent` repaints on `boardChangeCount()`**, bumped in `publishBoard()`. Anything that
-  changes the board must publish, or the screen lags behind the pads.
+- **`BoardComponent` repaints from the lock-free `stones[]` mirror**, which only `publishBoard()`
+  writes. Anything that changes the board must publish, or the screen lags behind the pads.
 
 ---
 
