@@ -439,8 +439,8 @@ the development machine; nothing of it is in the plugin.
 | 19×19 | about 14 kyu | 20k 11/12 · 15k 7/12 |
 
 The reading and classic players lost nearly every game to 20 kyu on every board
-(the reading players won 3 of 48 games, the classic players none of those
-played on 9×9, 13×13 and 19×19), so they are shown as "<20 KYU"; KataGo's
+(the reading players won 3 of 48 games, the classic players none of 48), so
+they are shown as "<20 KYU"; KataGo's
 imitation goes no lower than 20 kyu, so how far below is not known.
 
 **Estimated.** How the rank moves with **Variation** was not played out. On the
