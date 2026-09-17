@@ -27,6 +27,15 @@ overview.
 > neural-network program, but it only marked moves on the development machine:
 > it is not in the plugin, never plays in it, and what came out is a set of
 > fixed numbers. See [The 8×8 weights (KataGo)](#the-88-weights-katago).
+>
+> **Credit — Monte Carlo tree search.** The *search* players play games out to
+> choose a move, using published algorithms: Monte Carlo tree search (Rémi
+> Coulom, *Crazy Stone*, 2006), UCT (Levente Kocsis and Csaba Szepesvári, 2006)
+> and RAVE with capture-and-escape playouts (Sylvain Gelly, David Silver and the
+> *MoGo* team, 2006–2007) — the same family of search
+> [Leela](https://github.com/gcp/Leela) uses. They are written from the papers'
+> ideas; no program's code is copied. Still no neural network, no model and no
+> training: random games, counted. See [The search players](#the-search-players).
 
 ## Table of contents
 
@@ -38,6 +47,7 @@ overview.
 - [AI self-play](#ai-self-play)
 - [Where the reading players come from (Leela)](#where-the-reading-players-come-from-leela)
   - [The 8×8 weights (KataGo)](#the-88-weights-katago)
+- [The search players](#the-search-players)
 - [Playing against the AI](#playing-against-the-ai)
 - [Using it in Ableton Live](#using-it-in-ableton-live)
   - [One track per channel: the MIDI out port (needs loopMIDI)](#one-track-per-channel-the-midi-out-port-needs-loopmidi)
@@ -170,11 +180,16 @@ It is saved with the session, and it belongs to the board it was played on: a
 
 ![One run, three games](docs/mockups/self-play.gif)
 
-**Two generations of players.** Black is *Kuro* and White is *Shiro* in both,
-and both keep their temperaments: Kuro plays territorially — keeps its stones
-safe and connected, takes the third line, fights when there is something to
-take — while Shiro fights: ataris, cuts and contact are worth more to it than
-shape. **Players** on the AI tab picks which generation writes the games:
+**Three kinds of players.** Black is *Kuro* and White is *Shiro* in all of
+them, and the rule-based two keep their temperaments: Kuro plays territorially —
+keeps its stones safe and connected, takes the third line, fights when there is
+something to take — while Shiro fights: ataris, cuts and contact are worth more
+to it than shape. **Players** on the AI tab picks who writes the games:
+
+- **Search** — by far the strongest. For every move they play thousands of quick
+  games out to the end and choose the move that keeps winning, guided by the
+  reading players' judgement of where to look first. A game takes a few seconds
+  to work out, in the background — see [The search players](#the-search-players).
 
 - **Reading** (the default for a new instance) — before choosing, they read the
   board as chains of stones: what a move captures or saves, which self-atari is
@@ -342,6 +357,61 @@ arithmetic. The 8×8 players are the same integer scoring rules as on every othe
 board, with different fixed numbers in [`Source/GoAI.h`](Source/GoAI.h) — no
 network, no model, nothing that learns — and a seed still names the same game on
 every machine.
+
+## The search players
+
+The reading players find good moves — KataGo's best move is nearly always among
+their top three — but they cannot tell which of those is right, because that
+depends on what happens several moves later. Reading further with the same rules
+does not help; that was measured. The search players ask the board instead.
+
+**How.** From the position, they play a few thousand fast games to the end. In
+each, a move is a random legal point that does not fill the player's own eye —
+except that a group left in atari by the last move is captured or rescued, and a
+move that would hand over a group of its own is avoided. They count who won.
+Moves that keep winning are explored more deeply (Monte Carlo tree search), and
+every move also learns from the games in which the same side played it later on
+(RAVE), which is what makes a few thousand games enough. At the top of the tree
+the reading players' scores decide which points to try first. **Variation** then
+draws among the moves the search played most, weighted by how often.
+
+**Still no AI in the machine-learning sense.** There is no neural network, no
+model and no training data, and nothing learns: every answer is random games,
+counted. It stays integer-only and deterministic — a position, a seed and a
+playout *count* name one answer on every machine and with either compiler (the
+tests pin it) — so a saved session still brings its games back from the seed.
+The work is split over four independent trees on four threads and their counts
+added up, so the number of cores changes how long it takes, never the result.
+
+**Time.** A search takes seconds, so it runs on a background thread and never
+blocks the host. Budgets are counts sized on the development laptop (Intel
+i7-11850H) for about **5 seconds per self-play game** and about **1 second per
+answer** in a match:
+
+- switching self-play on, or loading a session with a run, shows an empty board
+  and "the search players are thinking" until the game is ready — 1 to 7
+  seconds depending on board and game length; the next game is worked out while
+  this one plays;
+- in a match it stays their move ("their move - thinking") for about a second,
+  and the board and the pads refuse a stone until the answer lands;
+- the audio thread is untouched: it only ever swaps in finished games.
+
+**How much stronger.** Against the reading players, at variation 35, from both
+colours, played to the end (komi 7.5, area scoring), with the budgets the plugin
+uses:
+
+| Board | Self-play budget (≈5 s a game) | Match budget (≈1 s a move) |
+|---|---|---|
+| 8×8 | wins 40 of 40, by +40.7 | — |
+| 9×9 | wins 40 of 40, by +49.0 | wins 20 of 20, by +58.9 |
+| 13×13 | wins 20 of 20, by +69.4 | — |
+| 19×19 | wins 12 of 12, by +86.3 | wins 8 of 8, by +151.0 |
+
+Judged move by move by KataGo on the 8×8 positions held out from the weight
+tuning, the points a player gives away per move fall from 3.75 (reading players'
+best move) to 2.99 with the self-play budget and 2.81 with the match budget. That
+is a large step for these players and still far from strong play: no rank has
+been measured, so none is claimed.
 
 ## Playing against the AI
 

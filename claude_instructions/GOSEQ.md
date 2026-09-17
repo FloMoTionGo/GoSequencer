@@ -44,6 +44,7 @@ This is the single most expensive thing to re-derive. It is stated at `PluginPro
 | **audio** (`processBlock` → `renderBlock` → `triggerAt` → `fireCell`) | atomics and parameters only. The board **only** through `SpinLock::ScopedTryLockType`, skipping the block rather than waiting (`PluginProcessor.cpp:1432`). |
 | **message** | everything. Takes `boardLock` outright. All board mutation lives here. |
 | **device** (`juce::MidiInputCallback`) | a lock-free queue and `triggerAsyncUpdate()`. Never the board, never the heap. |
+| **search** (`AiService`, branch ai-strength-search) | its own requests and results under its own lock, plus copies (`go::Board`, `goai::Settings`) handed in. Never the processor's board; it only calls back to set a flag and `triggerAsyncUpdate()`. |
 
 **Audio → message handoff:** atomic flag + `AsyncUpdater`. `parameterChanged` (`cpp:566`) sets a
 `pendingXxx` flag and calls `triggerAsyncUpdate()`; `handleAsyncUpdate` (`cpp:594`) does the real
@@ -69,8 +70,10 @@ board: `stoneAt`, `stoneIsSpent`, `lastMove`, `currentStep`, `headPosition`, `he
 | File | What |
 |---|---|
 | `Source/GoBoard.h` | Rules + geometry. No JUCE, no heap, no floats. Board is runtime-sized, storage always `maxCells`. |
-| `Source/GoAI.h` | Two player pairs, integer-only, fully deterministic. Generates whole games. |
-| `Source/GoTactics.h` | What the reading players know: chains, ladders, influence, eyes. No playouts, no MCTS — deliberate. |
+| `Source/GoAI.h` | Classic and reading player pairs, integer-only, fully deterministic. Generates whole games. |
+| `Source/GoSearch.h` | *(branch ai-strength-search)* The **search** players: Monte Carlo tree search with RAVE, heavy playouts, reading-player priors at the root. Integer-only, deterministic for position + seed + playout **count**; a fixed number of independent trees (`Config::trees`), summed. Budgets are counts sized for ~5 s a game / ~1 s a reply on the dev laptop. |
+| `Source/AiService.*` | *(branch ai-strength-search)* The search players' `juce::Thread`: one slot each for the current game, the next game and a match reply; tokens cancel stale work; results reach the message thread through `pendingSearchResult` + `collectSearchResults()`. Started lazily. |
+| `Source/GoTactics.h` | What the reading players know: chains, ladders, influence, eyes. No playouts here — those live in GoSearch.h. |
 | `Source/SgfParser.h` | Game records in and out. |
 | `Source/LaunchpadMap.h` | Pad ↔ board point. JUCE-free so it is unit-tested. |
 | `Source/PluginProcessor.*` | Clocks, parameters, state, the board, MIDI generation. |

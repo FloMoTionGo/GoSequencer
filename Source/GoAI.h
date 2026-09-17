@@ -197,7 +197,8 @@ namespace goai
     enum class Players : int
     {
         classic = 0,    // one look at the board: the first Kuro and Shiro
-        reading = 1     // tactics and ladders read before they look
+        reading = 1,    // tactics and ladders read before they look
+        search  = 2     // games played out (GoSearch.h); generate() below does not write these
     };
 
     /** What a reading player wants: hundredths of a point, as in Style, over a

@@ -22,7 +22,10 @@
 //  weighs moves with pattern tables and neural networks trained on recorded
 //  games. Nothing here searches further than a ladder, nothing here was trained,
 //  and nothing learns: every answer below is plain, deterministic arithmetic on
-//  the stones in front of it, the same on every machine.
+//  the stones in front of it, the same on every machine. (The search players in
+//  GoSearch.h do play games out - random ones, counted, still with no network
+//  and nothing learned - and use the reading players' scores from here to
+//  decide which moves to try first.)
 //
 //  Like GoBoard.h this is plain C++: no JUCE, no heap, no floats.
 

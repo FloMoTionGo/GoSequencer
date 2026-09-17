@@ -7,6 +7,7 @@
 #include <iterator>
 #include <vector>
 
+#include "AiService.h"
 #include "GoAI.h"
 #include "GoBoard.h"
 #include "LaunchpadSurface.h"
@@ -299,6 +300,13 @@ public:
     /** Which game of the run is playing, counted from 1, and the seed it was
         generated from - the pair that names it exactly. */
     int  aiGameNumber() const noexcept { return aiGameCounter.load (std::memory_order_relaxed) + 1; }
+
+    /** The search players are working out the game that should be playing, or an
+        answer in a match. Any thread. */
+    bool searchThinking() const noexcept
+    {
+        return search.thinkingAboutGame (true) || search.thinkingAboutReply();
+    }
     unsigned int aiSeed() const noexcept { return aiSeedShown.load (std::memory_order_relaxed); }
 
     //==============================================================================
@@ -472,8 +480,16 @@ private:
     goai::Settings aiSettingsFor (int size, int gameNumber) const;
 
     /** Starts a run at this game number: generates it, puts it on the board,
-        and asks for the one after it. */
-    void startAiSelfPlay (int gameNumber);
+        and asks for the one after it. The search players' game is worked out in
+        the background instead; restorePosition is where to put the record when
+        it arrives, for a session being loaded. */
+    void startAiSelfPlay (int gameNumber, int restorePosition = -1);
+
+    /** Puts a freshly generated game on the board as the run's current one. */
+    void installAiGame (sgf::Game& fresh, int size, int gameNumber, unsigned int seed);
+
+    /** Message thread: whatever the search service has finished. */
+    void collectSearchResults();
 
     /** The switch going off: the run ends and its record is unloaded. Does
         nothing if the record on the board is not one of ours. */
@@ -511,6 +527,9 @@ private:
         they are a pure function of the position and take tens of microseconds -
         then plays what they chose. */
     void playOpponentReply();
+
+    /** Plays their chosen move, or their pass when it is -1. */
+    void applyOpponentMove (int idx, go::Stone colour);
 
     /** Keeps Stone Life below Wave Gap while Wave Replay is on, so a reset
         is always something a stone would otherwise have missed. Message
@@ -660,6 +679,7 @@ private:
     std::atomic<bool> pendingPortReopen      { false };
     std::atomic<bool> pendingMatchChange     { false };
     std::atomic<bool> pendingOpponentReply   { false };
+    std::atomic<bool> pendingSearchResult    { false };
 
     //  the notes' second way out, besides the host - see setMidiOutPort()
     MidiPortOut portOut;
@@ -668,6 +688,15 @@ private:
     //  board and the parameters, and both of those have to still be here - a
     //  member is destroyed before any member declared above it.
     LaunchpadSurface pads { *this };
+
+    //  The search players' thread. After pads, so it goes even before them: its
+    //  callback reaches the flag and the AsyncUpdater above, and it waits out a
+    //  move in progress before it is gone.
+    AiService search { [this]
+    {
+        pendingSearchResult.store (true, std::memory_order_relaxed);
+        triggerAsyncUpdate();
+    } };
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (GoSequencerProcessor)
 };

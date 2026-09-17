@@ -5,6 +5,7 @@
 
 #include "GoAI.h"
 #include "GoBoard.h"
+#include "GoSearch.h"
 #include "LaunchpadMap.h"
 #include "SgfParser.h"
 
@@ -1760,6 +1761,87 @@ namespace
         check (goai::chooseReadingMove (hunt, Stone::white, ix (6, 2), shiro, 0, rng, ws) == ix (7, 2),
                "starts the ladder that catches the stone");
     }
+
+    //==============================================================================
+    //  The search players (GoSearch.h): games played out, counted.
+
+    std::uint32_t hashChoices (const std::vector<gosearch::Choice>& choices)
+    {
+        std::uint32_t h = 2166136261u;
+
+        for (const auto& c : choices)
+            for (int value : { c.idx, c.visits, c.winPermille })
+                for (int b = 0; b < 4; ++b)
+                {
+                    h ^= (std::uint32_t) ((value >> (8 * b)) & 0xff);
+                    h *= 16777619u;
+                }
+
+        return h;
+    }
+
+    void testSearchPlayers()
+    {
+        std::printf ("search: the same position, seed and budget give the same answer\n");
+
+        auto ws = std::make_unique<gosearch::Workspace>();
+        gosearch::Config cfg;
+        cfg.playouts = 800;
+
+        const auto kuro = goai::readingBlack (9);
+        const auto opening = goai::generate (aiSettings (9, 10, 0, 1u));
+        go::Board position (9);
+
+        for (const auto& m : opening.moves)
+            position.play (m.index, m.colour, false, true);
+
+        const auto a = gosearch::analyse (position, Stone::black, kuro, cfg, 42u, *ws);
+        const auto b = gosearch::analyse (position, Stone::black, kuro, cfg, 42u, *ws);
+        check (hashChoices (a) == hashChoices (b), "twice over, move for move and game for game");
+
+        int visits = 0;
+
+        for (const auto& c : a)
+            visits += c.visits;
+
+        check (visits == (cfg.playouts / cfg.trees) * cfg.trees, "every playout is counted once, at the root");
+
+        std::printf ("search: it takes the stone that is in atari\n");
+
+        //  a white stone with one liberty left, at D5 - black to play there
+        const auto capture = boardFrom (9, { "", "", "", "...X.....", "..XOX....", "", "", "", "" });
+        const auto taken = gosearch::analyse (capture, Stone::black, kuro, cfg, 7u, *ws);
+        check (! taken.empty() && taken[0].idx == ix (3, 5), "the capture is the move it plays most");
+
+        std::printf ("search: a whole game is legal, and named by its seed\n");
+
+        auto settings = aiSettings (9, 40, 35, 99u, goai::Players::search);
+        const auto keepGoing = [] { return true; };
+        const auto g1 = gosearch::generate (settings, keepGoing, *ws);
+        const auto g2 = gosearch::generate (settings, keepGoing, *ws);
+
+        go::Board replay (9);
+        int refused = 0;
+
+        for (const auto& m : g1.moves)
+            if (! m.isPass && replay.play (m.index, m.colour, false, true) != MoveResult::ok)
+                ++refused;
+
+        check (g1.moveCount() > goai::openingLength, "it plays past the opening");
+        check (refused == 0, "no move of it is refused by the strict rules");
+        bool same = g1.moveCount() == g2.moveCount();
+
+        for (int i = 0; same && i < g1.moveCount(); ++i)
+            same = g1.moves[(size_t) i].index == g2.moves[(size_t) i].index;
+
+        check (same, "the same seed plays the same game");
+        check (g1.blackRank == "search" && g1.whiteRank == "search", "and says who played it");
+
+        //  Pinned like the other players, so a change to the search that is not a
+        //  no-op cannot slip by - and so two compilers are held to one answer.
+        std::printf ("search: pinned\n");
+        check (hashChoices (a) == 0xb08fa946u, "800 playouts on a 9x9 after the book, move for move");
+    }
 }
 
 int main (int argc, char** argv)
@@ -1811,6 +1893,7 @@ int main (int argc, char** argv)
     testTacticsVitalPoints();
     testReadingPlayersKeepTheContract();
     testReadingPlayersRead();
+    testSearchPlayers();
 
     if (argc > 1)
         testSgfFile (argv[1]);

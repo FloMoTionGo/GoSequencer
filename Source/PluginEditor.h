@@ -201,6 +201,8 @@ private:
     //  a run swaps its own record in when a game ends, so the title line has to
     //  be re-read rather than only refreshed when something was clicked
     bool lastAiShown = false;
+    int lastMoveTotalShown = -1;
+    bool lastThinkingShown = false;
     int lastAiGameShown = -1;
 
     /** The opening line, and the enables that go with it - re-read when the

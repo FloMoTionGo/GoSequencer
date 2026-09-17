@@ -936,10 +936,14 @@ void GoSequencerEditor::refreshOpeningDisplay()
 void GoSequencerEditor::refreshGameDisplay()
 {
     const bool has = processor.hasGame();
+    const bool preparing = ! has && processor.aiSelfPlay() && processor.searchThinking();
 
-    gameTitleLabel.setText (has ? processor.gameTitle() : "no record loaded", juce::dontSendNotification);
+    gameTitleLabel.setText (has ? processor.gameTitle()
+                                : preparing ? "the search players are thinking" : "no record loaded",
+                            juce::dontSendNotification);
     gameTitleLabel.setColour (juce::Label::textColourId, has ? theme::ink : theme::dimText);
-    gameDetailLabel.setText (has ? processor.gameDetail() : "drop an .sgf here, or load one",
+    gameDetailLabel.setText (has ? processor.gameDetail()
+                                 : preparing ? "playing the game out - a few seconds" : "drop an .sgf here, or load one",
                              juce::dontSendNotification);
 
     moveSlider.setEnabled (has);
@@ -1020,7 +1024,7 @@ void GoSequencerEditor::refreshMatchDisplay()
              + (processor.yourColour() == go::Stone::black ? "black" : "white")
              + (processor.passCount() == 1 ? ", and a pass stands: pass again to end it" : "");
     else
-        line = "their move";
+        line = processor.searchThinking() ? "their move - thinking" : "their move";
 
     matchLabel.setText (line, juce::dontSendNotification);
     matchLabel.setColour (juce::Label::textColourId, over ? theme::accent : theme::dimText);
@@ -1445,6 +1449,20 @@ void GoSequencerEditor::timerCallback()
     //  a button.
     const bool ai = processor.aiSelfPlay();
     const int aiGame = ai ? processor.aiGameNumber() : -1;
+
+    //  a search game arrives from the background with the same number it was
+    //  asked for under, so what changes is whether there is a record, and whether
+    //  they are still thinking
+    const int moveTotal = processor.gameMoveCount();
+    const bool thinking = processor.searchThinking();
+
+    if (moveTotal != lastMoveTotalShown || thinking != lastThinkingShown)
+    {
+        lastMoveTotalShown = moveTotal;
+        lastThinkingShown = thinking;
+        refreshGameDisplay();
+        refreshMatchDisplay();
+    }
 
     if (ai != lastAiShown || aiGame != lastAiGameShown)
     {

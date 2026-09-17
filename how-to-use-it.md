@@ -324,13 +324,21 @@ played on — the same points mean something else on a 13×13. Changing size
 therefore falls back to the built-in book for that board, and the line under
 the buttons says so.
 
-**The two players** — Black is *Kuro*, White is *Shiro* — come in two
-generations, picked with **Players** on the **AI** tab. Both are algorithms,
-not AI in the machine-learning sense: every legal point gets a score from fixed
-rules, and one of the best twelve is drawn with the seeded random number
-generator. There is no neural network and no training, and nothing learns while
-you play — more on that in
+**The two players** — Black is *Kuro*, White is *Shiro* — come in three kinds,
+picked with **Players** on the **AI** tab. All are algorithms, not AI in the
+machine-learning sense. There is no neural network and no training, and nothing
+learns while you play — more on that in
 [The players, and what Leela gave them](#the-players-and-what-leela-gave-them).
+
+- **Search** — the strongest by far. For each move they play thousands of quick
+  games out to the end (Monte Carlo tree search) and choose the move that keeps
+  winning, starting from the points the reading players rate best. It takes
+  seconds, so it runs in the background: switching self-play on, or opening a
+  session that had a run, shows *"the search players are thinking"* for 1–7
+  seconds before the game appears, and in a match it is *"their move -
+  thinking"* for about a second, during which the board and the pads refuse a
+  stone. Like the others it is deterministic: the same seed brings back the same
+  game. The README's *The search players* section has the details and credits.
 
 - **Reading** — the default for a new instance. Before scoring a point they
   read the board as chains of stones: what a move captures or saves, whether a

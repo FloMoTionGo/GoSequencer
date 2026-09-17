@@ -47,7 +47,7 @@ juce::StringArray GoSequencerProcessor::lifeModeNames()
 juce::StringArray GoSequencerProcessor::aiPlayersNames()
 {
     //  a saved session stores the index, so a new pair goes on the end
-    return { "Classic", "Reading" };
+    return { "Classic", "Reading", "Search" };
 }
 
 juce::StringArray GoSequencerProcessor::aiOpponentColourNames()
@@ -705,6 +705,9 @@ void GoSequencerProcessor::handleAsyncUpdate()
         portOut.setPort (midiOutPort());
         pads.setPorts ({ launchpadIn(), launchpadOut() });
     }
+
+    if (pendingSearchResult.exchange (false, std::memory_order_relaxed))
+        collectSearchResults();
 }
 
 void GoSequencerProcessor::clampStoneLifeToWaveGap()
@@ -995,7 +998,7 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
     return settings;
 }
 
-void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
+void GoSequencerProcessor::startAiSelfPlay (int gameNumber, int restorePosition)
 {
     //  a run writes the whole board, so a game in progress gives it up
     releaseMatch();
@@ -1003,7 +1006,32 @@ void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
     const int size = chosenBoardSize();
     const auto settings = aiSettingsFor (size, gameNumber);
 
+    search.cancelGames();
+
+    if (settings.players == goai::Players::search)
+    {
+        //  Seconds of work: asked of the service, and put on the board when it
+        //  arrives (collectSearchResults). Until then the run is on, with an
+        //  empty board and no record, so nothing plays.
+        sgf::Game none;
+        installAiGame (none, size, gameNumber, settings.seed);
+
+        AiService::GameRequest request;
+        request.settings = settings;
+        request.number = gameNumber;
+        request.current = true;
+        request.restorePosition = restorePosition;
+        search.requestGame (request);
+        return;
+    }
+
     auto fresh = goai::generate (settings);
+    installAiGame (fresh, size, gameNumber, settings.seed);
+    prepareNextAiGame();
+}
+
+void GoSequencerProcessor::installAiGame (sgf::Game& fresh, int size, int gameNumber, unsigned int seed)
+{
     const int count = fresh.moveCount();
 
     {
@@ -1025,7 +1053,7 @@ void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
 
     aiActive.store (true, std::memory_order_relaxed);
     aiGameCounter.store (gameNumber, std::memory_order_relaxed);
-    aiSeedShown.store (settings.seed, std::memory_order_relaxed);
+    aiSeedShown.store (seed, std::memory_order_relaxed);
 
     activeSize.store (size, std::memory_order_relaxed);
     gameMoveTotal.store (count, std::memory_order_relaxed);
@@ -1033,12 +1061,59 @@ void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
     step.store (0, std::memory_order_relaxed);
     gameCountdown = 0.0;
     nextAlternating.store ((int) go::Stone::black, std::memory_order_relaxed);
+}
 
-    prepareNextAiGame();
+void GoSequencerProcessor::collectSearchResults()
+{
+    //  the game that should be playing now: still wanted if the run is still on,
+    //  at the same game number and on the same board
+    if (auto result = search.takeGame (true))
+    {
+        if (aiSelfPlay() && result->number == aiGameCounter.load (std::memory_order_relaxed)
+            && result->game.size == activeSize.load (std::memory_order_relaxed))
+        {
+            installAiGame (result->game, result->game.size, result->number, result->seed);
+
+            if (result->restorePosition >= 0)
+                setGamePosition (result->restorePosition);
+
+            prepareNextAiGame();
+        }
+    }
+
+    if (auto result = search.takeGame (false))
+    {
+        if (aiSelfPlay() && result->number == aiGameCounter.load (std::memory_order_relaxed) + 1
+            && result->game.size == activeSize.load (std::memory_order_relaxed))
+        {
+            const juce::SpinLock::ScopedLockType sl (boardLock);
+
+            goai::swapGames (aiNextGame, result->game);
+            aiNextNumber = result->number;
+            aiNextSeed = result->seed;
+            aiNextReady = true;
+        }
+
+        //  result->game holds what aiNextGame held, and is freed here
+    }
+
+    if (auto result = search.takeReply())
+    {
+        const bool stillTheirs = matchActive() && ! matchIsOver()
+                              && (go::Stone) nextAlternating.load (std::memory_order_relaxed) == result->colour
+                              && result->colour == opponentColour();
+
+        if (stillTheirs && result->positionToken == (int) boardChangeCount())
+            applyOpponentMove (result->move, result->colour);
+        else if (stillTheirs)
+            playOpponentReply();        //  the board moved on while they thought: think again
+    }
 }
 
 void GoSequencerProcessor::stopAiSelfPlay()
 {
+    search.cancelGames();
+
     if (! aiActive.exchange (false, std::memory_order_relaxed))
         return;         //  something else owns the record now: leave it alone
 
@@ -1054,6 +1129,8 @@ void GoSequencerProcessor::stopAiSelfPlay()
 
 void GoSequencerProcessor::releaseAiSelfPlay()
 {
+    search.cancelGames();
+
     if (! aiActive.exchange (false, std::memory_order_relaxed))
         return;
 
@@ -1080,6 +1157,21 @@ void GoSequencerProcessor::prepareNextAiGame()
     const int size = activeSize.load (std::memory_order_relaxed);
     const int number = aiGameCounter.load (std::memory_order_relaxed) + 1;
     const auto settings = aiSettingsFor (size, number);
+
+    if (settings.players == goai::Players::search)
+    {
+        //  in the background, while the current game plays; if it is not ready
+        //  when that one ends, the current game simply plays again
+        AiService::GameRequest request;
+        request.settings = settings;
+        request.number = number;
+        request.current = false;
+        search.requestGame (request);
+        return;
+    }
+
+    //  a search game for this slot still on its way would land on top of this one
+    search.cancelGame (false);
 
     auto next = goai::generate (settings);
 
@@ -1139,6 +1231,8 @@ void GoSequencerProcessor::startMatch()
 
 void GoSequencerProcessor::releaseMatch()
 {
+    search.cancelReply();
+
     if (! matchOn.exchange (false, std::memory_order_relaxed))
         return;             //  nothing to end
 
@@ -1186,6 +1280,20 @@ void GoSequencerProcessor::playOpponentReply()
 
     const bool black = (colour == go::Stone::black);
 
+    if (settings.players == goai::Players::search)
+    {
+        //  about a second of playouts: in the background. Until the answer comes
+        //  back it stays their move, so the board and the pads refuse yours.
+        AiService::ReplyRequest request;
+        request.board = position;
+        request.colour = colour;
+        request.settings = settings;
+        request.seed = goai::gameSeed (settings.seed, position.stoneCount());
+        request.positionToken = (int) boardChangeCount();
+        search.requestReply (request);
+        return;
+    }
+
     const int idx = settings.players == goai::Players::reading
         ? goai::chooseReadingMove (position, colour, position.lastMove(),
                                    black ? settings.readingBlack : settings.readingWhite,
@@ -1194,6 +1302,11 @@ void GoSequencerProcessor::playOpponentReply()
                             black ? settings.black : settings.white,
                             settings.variation, rng);
 
+    applyOpponentMove (idx, colour);
+}
+
+void GoSequencerProcessor::applyOpponentMove (int idx, go::Stone colour)
+{
     if (idx >= 0 && playMove (idx, colour, true) == go::MoveResult::ok)
         return;
 
@@ -1225,6 +1338,7 @@ void GoSequencerProcessor::newMatch()
     if (! matchActive())
         return;
 
+    search.cancelReply();
     clearBoard();
 
     if (opponentColour() == go::Stone::black)
@@ -1885,7 +1999,9 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
     //  what makes the two agree.
     if (aiPlayParam != nullptr && aiPlayParam->get())
     {
-        startAiSelfPlay (savedAiGame);
+        //  the search players' game arrives later and goes to `position` then;
+        //  for the others it is here already, and setGamePosition puts it there
+        startAiSelfPlay (savedAiGame, position);
         setGamePosition (position);
     }
 

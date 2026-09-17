@@ -55,6 +55,7 @@ juce_add_plugin(GoSequencer
 target_sources(GoSequencer
     PRIVATE
         Source/PluginProcessor.cpp
+        Source/AiService.cpp
         Source/PluginEditor.cpp
         Source/BoardComponent.cpp
         Source/MidiPortOut.cpp
