@@ -142,11 +142,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                         boardSizeNames(), 0));
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "playMode", 1 }, "Mode",
-                                                        playModeNames(), 0));
+                                                        playModeNames(), 1));
 
     //  what a stone's life is counted in: ticks of the clock, or stones laid after it
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "lifeMode", 1 }, "Life Counts",
-                                                        lifeModeNames(), 0));
+                                                        lifeModeNames(), 1));
 
     //  how long a stone keeps sounding once it lands
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "stoneLife", 1 }, "Stone Life",
@@ -219,6 +219,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "aiOpponentColour", 1 }, "Opponent Plays",
                                                         aiOpponentColourNames(), 0));
 
+    //  on by default so existing sessions keep sounding the way they always
+    //  have - fireCell has tied same-colour runs since before this switch existed
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "tieNotes", 1 }, "Tie Notes", true));
+
     return layout;
 }
 
@@ -236,6 +240,7 @@ GoSequencerProcessor::GoSequencerProcessor()
     gateParam        = dynamic_cast<juce::AudioParameterFloat*>  (apvts.getParameter ("gate"));
     tempoParam       = dynamic_cast<juce::AudioParameterFloat*>  (apvts.getParameter ("tempo"));
     freeRunParam     = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("freeRun"));
+    tieNotesParam    = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("tieNotes"));
     koRuleParam      = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("koRule"));
     selfCaptureParam = dynamic_cast<juce::AudioParameterBool*>   (apvts.getParameter ("selfCapture"));
     colourModeParam  = dynamic_cast<juce::AudioParameterChoice*> (apvts.getParameter ("colourMode"));
@@ -1440,7 +1445,10 @@ void GoSequencerProcessor::fireCell (int idx, int head, int channelIn, int semit
     //  Same colour as the stone this head just sounded: rather than close that
     //  note and retrigger, push its note off further out so the two steps
     //  read as one sustained note for the whole run of same-coloured stones.
-    if (tie.colour == stone && tie.note == note && tie.channel == channel)
+    //  Gated by tieNotes so the toggle can fall back to a fresh retrigger per
+    //  step; tie is still updated below either way, so switching the toggle
+    //  back on mid-run resumes ties rather than forcing one extra retrigger.
+    if (tieNotesParam->get() && tie.colour == stone && tie.note == note && tie.channel == channel)
     {
         for (auto& p : pending)
         {

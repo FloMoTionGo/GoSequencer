@@ -597,6 +597,7 @@ private:
     juce::AudioParameterFloat*  gateParam        = nullptr;
     juce::AudioParameterFloat*  tempoParam       = nullptr;
     juce::AudioParameterBool*   freeRunParam     = nullptr;
+    juce::AudioParameterBool*   tieNotesParam    = nullptr;
     juce::AudioParameterBool*   koRuleParam      = nullptr;
     juce::AudioParameterBool*   selfCaptureParam = nullptr;
     juce::AudioParameterChoice* colourModeParam  = nullptr;

@@ -444,7 +444,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setLookAndFeel (&lookAndFeel);
 
     //  the scheme has to be right before anything below reads a theme:: colour
-    theme::setDark (processor.apvts.state.getProperty (darkModeProperty, false));
+    theme::setDark (processor.apvts.state.getProperty (darkModeProperty, true));
     lookAndFeel.applyColours();
 
     lastSgfDirectory = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
@@ -491,6 +491,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setUpToggle (sequencerTab, freeRunButton, "Free run", "freeRun", freeRunAttachment);
     setUpSlider (sequencerTab, tempoSlider, tempoCaption, "free tempo", "tempo", tempoAttachment);
     setUpSlider (sequencerTab, spreadSlider, spreadCaption, "spread", "ringSpread", spreadAttachment);
+    setUpToggle (sequencerTab, tieNotesButton, "Tie notes", "tieNotes", tieNotesAttachment);
 
     //  ---- board ------------------------------------------------------------
     setUpToggle (boardTab, koButton, "Ko rule", "koRule", koAttachment);
@@ -1267,6 +1268,7 @@ void GoSequencerEditor::resized()
         //  spread only means anything with more than one head, so it goes last
         cells = columns (nextRow (rows, cellHeight), 2);
         placeSlider (cells[0], spreadCaption, spreadSlider);
+        placeControl (cells[1], tieNotesButton);
     }
 
     //  ---- board ------------------------------------------------------------

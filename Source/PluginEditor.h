@@ -157,7 +157,7 @@ private:
     static constexpr int headChannels = GoSequencerProcessor::maxHeadChannels;
     std::array<juce::Slider, (size_t) headChannels> headChannelSliders;
     std::array<juce::Label,  (size_t) headChannels> headChannelCaptions;
-    juce::TextButton freeRunButton, koButton, selfCaptureButton, clearButton,
+    juce::TextButton freeRunButton, tieNotesButton, koButton, selfCaptureButton, clearButton,
                      loadButton, runGameButton, loopGameButton, unloadButton,
                      previousMoveButton, nextMoveButton, waveReplayButton,
                      aiPlayButton, openingFromBoardButton, openingBookButton,
@@ -182,7 +182,7 @@ private:
     std::unique_ptr<ComboBoxAttachment> rateAttachment, colourAttachment, sizeAttachment, gameRateAttachment,
                                         modeAttachment, lifeModeAttachment, aiPlayersAttachment,
                                         aiOpponentColourAttachment;
-    std::unique_ptr<ButtonAttachment>   freeRunAttachment, koAttachment, selfCaptureAttachment,
+    std::unique_ptr<ButtonAttachment>   freeRunAttachment, tieNotesAttachment, koAttachment, selfCaptureAttachment,
                                         runGameAttachment, loopGameAttachment, waveReplayAttachment,
                                         aiPlayAttachment, aiOpponentAttachment;
 
