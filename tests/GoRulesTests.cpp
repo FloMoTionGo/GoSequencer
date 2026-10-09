@@ -667,6 +667,45 @@ namespace
         check (! go::isSupportedSize (7) && ! go::isSupportedSize (15), "nor for any size between the three");
     }
 
+    //  Replay writes the moves that made a board as a record of its own, and a
+    //  session saves it as text: what is written has to come back the same game.
+    void testSgfWriter()
+    {
+        std::printf ("sgf writer\n");
+
+        const auto original = sgf::parse ("(;FF[4]SZ[9]GN[a \\] bracket]PB[Kuro]AB[cc][gg]AW[gc];B[];W[ee];B[ia];W[ai])");
+        const auto back = sgf::parse (sgf::write (original));
+
+        bool sameMoves = back.moveCount() == original.moveCount() && back.setup.size() == original.setup.size();
+
+        for (size_t i = 0; sameMoves && i < original.moves.size(); ++i)
+            sameMoves = back.moves[i].colour == original.moves[i].colour && back.moves[i].isPass == original.moves[i].isPass
+                     && back.moves[i].index == original.moves[i].index;
+
+        for (size_t i = 0; sameMoves && i < original.setup.size(); ++i)
+            sameMoves = back.setup[i].colour == original.setup[i].colour && back.setup[i].index == original.setup[i].index;
+
+        check (back.valid && back.size == 9 && sameMoves, "written and read again: the same setup and moves, the pass too");
+        check (back.gameName == "a ] bracket" && back.blackName == "Kuro", "names survive, a bracket in them escaped");
+
+        //  every point of a 19x19, the far edges' letter s included, alternating
+        sgf::Game full;
+        full.valid = true;
+        full.size = 19;
+
+        for (int i = 0; i < 361; ++i)
+            full.moves.push_back ({ i % 2 == 0 ? Stone::black : Stone::white, i, false });
+
+        const auto again = sgf::parse (sgf::write (full));
+        bool sameGame = again.valid && again.size == 19 && again.moveCount() == 361;
+
+        for (size_t i = 0; sameGame && i < full.moves.size(); ++i)
+            sameGame = again.moves[i].index == full.moves[i].index && again.moves[i].colour == full.moves[i].colour
+                    && ! again.moves[i].isPass;
+
+        check (sameGame, "all 361 points of a 19x19 come back where they were");
+    }
+
     void testSgfFile (const char* path)
     {
         std::printf ("sgf file: %s\n", path);
@@ -1539,34 +1578,56 @@ namespace
 
         check (onTheEdge && unique, "sixteen buttons, each one on the edge and each one once");
 
-        //  the first layer as it was before Shift existed - Redraw aside, and Note,
-        //  which toggled Free Run until that went, now ties notes
-        const std::pair<int, Job> firstLayer[] =
+        //  the map of 2026-10-09: every job on the top row - press, Shift + press
+        //  and hold - and nothing on the right hand column but Shift
+        struct Expected { int index; Job plain, shifted, held; };
+
+        const Expected topRow[] =
         {
-            { 91, Job::rateFaster }, { 92, Job::rateSlower }, { 93, Job::stepBack },   { 94, Job::stepOn },
-            { 95, Job::runGame },    { 96, Job::tieNotes },   { 97, Job::cyclePlace }, { 98, Job::holdClear },
-            { 89, Job::playAgainst }, { 79, Job::pass },      { 69, Job::liftLast },   { 59, Job::loop },
-            { 49, Job::waveReplay }, { 39, Job::moveRateFaster }, { 29, Job::moveRateSlower },
+            { 91, Job::rateFaster,     Job::none,        Job::resetRate },
+            { 92, Job::rateSlower,     Job::none,        Job::resetMoveRate },
+            { 93, Job::moveRateSlower, Job::stepBack,    Job::firstMove },
+            { 94, Job::moveRateFaster, Job::stepOn,      Job::lastMove },
+            { 95, Job::cycleWalk,      Job::none,        Job::none },
+            { 96, Job::runGame,        Job::newGame,     Job::clearBoard },
+            { 97, Job::selfPlay,       Job::playAgainst, Job::bothOff },
+            { 98, Job::replay,         Job::waveReplay,  Job::lifeThirty },
         };
 
-        bool unchanged = true;
+        bool asMapped = true;
 
-        for (const auto& [index, job] : firstLayer)
-            if (lpx::jobFor (index, false) != job)
-                unchanged = false;
+        for (const auto& e : topRow)
+            if (lpx::jobFor (e.index, false) != e.plain || lpx::jobFor (e.index, true) != e.shifted
+                 || lpx::holdJobFor (e.index) != e.held)
+                asMapped = false;
 
-        check (unchanged, "the first layer is the map it always was");
+        check (asMapped, "the top row: press, Shift + press and hold, as mapped");
 
-        check (lpx::shiftIndex == 19 && lpx::jobFor (19, false) == Job::shift && lpx::jobFor (19, true) == Job::none,
-               "the bottom of the right hand column is Shift, with no second job of its own");
+        bool sideDark = true;
 
-        //  every job in the table, both layers, counted
+        for (int row = 0; row < 7; ++row)
+        {
+            const int index = lpx::sceneIndex (row);
+
+            if (lpx::jobFor (index, false) != Job::none || lpx::jobFor (index, true) != Job::none
+                 || lpx::holdJobFor (index) != Job::none)
+                sideDark = false;
+        }
+
+        check (sideDark, "the right hand column has no job above Shift");
+
+        check (lpx::shiftIndex == 19 && lpx::jobFor (19, false) == Job::shift && lpx::jobFor (19, true) == Job::none
+                 && lpx::holdJobFor (19) == Job::none,
+               "the bottom of the right hand column is Shift, with no second job and no hold");
+
+        //  every job in the table, all three layers, counted
         std::array<int, 64> seen {};
 
         for (const auto& button : lpx::edgeButtons)
         {
             ++seen[(size_t) button.plain];
             ++seen[(size_t) button.shifted];
+            ++seen[(size_t) button.held];
         }
 
         bool noneTwice = true;
@@ -1576,17 +1637,8 @@ namespace
                 noneTwice = false;
 
         check (noneTwice, "no job sits on two buttons");
-        check (seen[(size_t) Job::redraw] == 1 && seen[(size_t) Job::selfPlay] == 1 && seen[(size_t) Job::holdRandom] == 1,
-               "Redraw moved rather than went, and self-play and Random have a button");
 
-        check (lpx::jobFor (95, true) == Job::selfPlay, "Shift + Session turns self-play on and off");
-        check (lpx::jobFor (98, true) == Job::holdRandom && lpx::isHoldJob (Job::holdRandom),
-               "Shift + Capture MIDI is the random position, on a hold like Clear");
-        check (lpx::isHoldJob (Job::holdClear) && lpx::isHoldJob (Job::holdUnload) && ! lpx::isHoldJob (Job::selfPlay),
-               "Clear and Unload are holds too, and nothing else is");
-
-        check (lpx::jobFor (59, true) == Job::none && lpx::jobFor (49, true) == Job::none
-                 && lpx::jobFor (96, true) == Job::none,
+        check (lpx::jobFor (91, true) == Job::none && lpx::jobFor (95, true) == Job::none,
                "a button with no second job does nothing under Shift, not its first one");
 
         bool labelled = true;
@@ -1597,6 +1649,9 @@ namespace
                 labelled = false;
 
             if (button.shifted != Job::none && std::string (button.shiftedLabel).empty())
+                labelled = false;
+
+            if (button.held != Job::none && std::string (button.heldLabel).empty())
                 labelled = false;
         }
 
@@ -1978,6 +2033,7 @@ int main (int argc, char** argv)
     testSgfBasics();
     testSgfPassesAndSetup();
     testSgfFailures();
+    testSgfWriter();
 
     testAiOpening();
     testAiLegalityAndLength();

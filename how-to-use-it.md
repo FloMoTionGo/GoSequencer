@@ -191,6 +191,8 @@ click on it does and what the rules allow.
   (always white).
 - **Clear board** — lifts every stone and resets the capture counts. This does
   *not* unload a loaded record; use **Unload** in the RECORD section for that.
+  In a game against the players (**you play**) it starts a new game, so they
+  open it at once if they play black.
 - **Random** (under Clear board) — clears the board and fills about a third
   of it at once: the AI players play 21 moves on an 8×8, 27 on a 9×9, 56 on a
   13×13 and 120 on a 19×19 in an instant. Everything else is drawn at random
@@ -208,8 +210,6 @@ click on it does and what the rules allow.
     stops; each switch goes off. Your SHIRO VS KURO settings are not changed.
   - The display says what was drawn, e.g. *random position: 27 moves,
     reading players, Black fighting, variation 62%*.
-  - On a Launchpad: hold **Shift** and hold **Capture MIDI**
-    ([§11](#11-the-launchpad-x-patch-face)).
 - **Rules: Ko rule** (default **on**) — forbids immediately recreating the
   board position that existed right before the previous move (the standard Go
   ko rule, preventing an infinite capture/recapture loop). Turn it off to
@@ -227,14 +227,14 @@ with the board rather than with the sound.
 
 ### Playheads: walk, step rate, clock
 
-- **Walk** — `spiral`, `polyrhythm`, `quads out`, `quads in`, each with a small
-  picture of its path. Fully explained in [§7](#7-playhead-modes-explained-in-depth).
+- **Walk** — `spiral` (the default), `polyrhythm`, `quads out`, `quads in`, each
+  with a small picture of its path. Fully explained in [§7](#7-playhead-modes-explained-in-depth).
   The line at the bottom of the section says what the walk means on this
   board: *1 head walks all 81 points*, *6 heads, one per ring · laps of 48 · 40
   · 32 · 24 · 16 · 8*, or *4 heads, one per quadrant · 25 steps each*.
 - **Step rate** — how often the clock advances, as a musical division synced
   to host tempo: `1/1, 1/2, 1/4, 1/4T, 1/8, 1/8T, 1/16, 1/16T, 1/32` (default
-  `1/16`; one tick round the knob per division). Triplet values are marked `T`.
+  `1/8`; one tick round the knob per division). Triplet values are marked `T`.
 - **The clock** — in a DAW, the host is the clock. The sequencer advances
   while the host transport plays, at the host's tempo, locked to its bar
   position. Pressing stop halts the clock, sends all-notes-off, and resets
@@ -251,8 +251,8 @@ Three columns, each a part of how a note sounds.
 
 **Pitch**
 
-- **Note** — the MIDI pitch every stone plays (shown as a note name, e.g.
-  `C3`). Where a stone stands decides *when* it plays, not how high: in Spiral
+- **Note** — the MIDI pitch every stone plays (shown as a note name; default
+  `C2`). Where a stone stands decides *when* it plays, not how high: in Spiral
   every stone plays this note.
 - **Spread** — semitones between one playhead and the next (−12 to +12): head
   1 plays **Note**, head 2 **Note** + Spread, head 3 **Note** + 2 × Spread, and
@@ -263,7 +263,8 @@ Three columns, each a part of how a note sounds.
 
 - **Gate** — note length as a percentage of one step (5%–100%). Short gates
   give a plucky, staccato feel; near 100% the notes run into each other.
-- **Tie notes** (default **on**) — when a playhead passes over a run of stones
+- **Tie notes** (default **off**; a session saved before the switch existed
+  comes back with it on) — when a playhead passes over a run of stones
   of the same colour, one after another, they play as **one held note** that
   lasts the whole run, instead of a fresh note on every step. Off, every stone
   is struck again.
@@ -313,7 +314,7 @@ time, independent of (and simultaneously with) the step sequencer's own clock
    section.
 3. **Move rate** sets how fast recorded moves are played back, independent of
    the sequencer's own **Step rate**: `1/4, 1/2, 1 bar, 2 bars, 4 bars, 8
-   bars`, or `one lap` (the move rate automatically matches however long one
+   bars`, or `one lap` (default `2 bars`; the move rate automatically matches however long one
    full pass of the current playhead mode takes).
 4. **Run game** starts/stops automatic playback of the record at that rate. It
    is faded while there is no record.
@@ -550,9 +551,9 @@ stone keeps sounding:
 
 - **Stone life** — how many steps or placements a stone keeps sounding after
   it's played (1–128; the top value shows as `hold`, meaning stones never
-  expire). The knob reads the unit too: *15 steps*, or *15 placed*.
+  expire; the default). The knob reads the unit too: *15 steps*, or *15 placed*.
 - **Life counts** — whether Stone life is measured in `Steps` of the sequencer
-  clock or `Placements` (stones laid down since).
+  clock or `Placements` (stones laid down since; the default).
 - **Wave replay** and **Wave gap** — below. Wave gap is faded while Wave replay
   is off.
 
@@ -907,35 +908,54 @@ modes.
 The names printed on the edge buttons are Novation's, not Go Sequencer's. This
 is what they do here — the LAUNCHPAD X section draws the Launchpad with the
 same jobs written by its buttons: the top row's above it, slanted, one
-starting over each key, and each side button's in its own row, pointing at it.
+starting over each key, and on the right what holding each top key does.
 
-**Shift** is the bottom button of the right column. While you hold it, every
-other edge button does its second job (the right-hand column below). A button
-with no second job does nothing while Shift is held, rather than its usual
-job. The drawing shows the second layer while Shift is held on the device, or
-while the mouse is over its Shift key.
+Every job is on the **top row**, three to a button: a **press**, a press with
+**Shift** held, and a **hold** (keep it down for about 0.7 s). On a button with
+a hold job the press acts when you let go — only then is it clear it wasn't a
+hold — and the button lights white while it waits. A hold does its job the
+moment it's long enough; letting go after that does nothing more.
 
-| Button | What it does | With **Shift** held |
-|---|---|---|
-| **Pads** | Press an empty point to place a stone — the colour **Place** says, just as a click would. Press a stone to lift it (not during a game against the players). | The same |
-| **Up** / **Down** arrows | Step rate faster / slower | **Note** a semitone up / down |
-| **Left** / **Right** arrows | One move back / on in the loaded game | To the first / last move of the record |
-| **Session** | Run game on / off | **Auto play** on / off |
-| **Note** | Tie notes on / off | — |
-| **Custom** | Cycle **Place**: Alternate → Black → White | Cycle **Walk**: spiral → polyrhythm → quads out → quads in |
-| **Capture MIDI** | Hold for a moment to clear the board — or, in a game against the players, to start a new one | Hold for a moment: a **random position** (see [§4](#4-under-the-board-size-place-rules)) |
-| Right column, 1st from the top | **You play** on / off | Players: classic ↔ reading |
-| 2nd | Pass | Hold for a moment: **unload** the record (the stones stay) |
-| 3rd | Lift the last stone played | Redraw: set the Launchpad up again and resend every light |
-| 4th | Loop on / off | — |
-| 5th | Wave Replay on / off | — |
-| 6th | Move rate faster | Stone life one longer |
-| 7th | Move rate slower | Stone life one shorter |
-| 8th (bottom) | **Shift** (hold) | — |
+**Shift** is the bottom button of the right column. While you hold it, the top
+row does its second jobs, at once (there are no holds on the Shift layer). A
+button with no second job does nothing while Shift is held, rather than its
+usual job. The drawing shows the second layer while Shift is held on the
+device, or while the mouse is over its Shift key. The rest of the right
+column has no job for now and stays dark.
 
-A hold keeps the job it started with: let go of Shift halfway through holding
-Capture MIDI and you still get the random position. Let go of the button itself
-too early and nothing happens.
+| Button | Press | With **Shift** held | Hold |
+|---|---|---|---|
+| **Pads** | Press an empty point to place a stone — the colour **Place** says, just as a click would. Press a stone to lift it (not during a game against the players). | The same | — |
+| **Up** arrow | Step rate faster | — | Step rate back to its default (1/8) |
+| **Down** arrow | Step rate slower | — | Move rate back to its default (2 bars) |
+| **Left** arrow | Move rate slower | One move back in the record | To move 0 of the record |
+| **Right** arrow | Move rate faster | One move on in the record | To the record's last move |
+| **Session** | Cycle **Walk**: spiral → polyrhythm → quads out → quads in. Lit in the walk's colour: red, green, blue, dim blue | — | — |
+| **Note** | **Run game** on / off | **New game** (below) | Clear the board — or, in a game against the players, start a new one |
+| **Custom** | **Auto play** on / off | **You play** on / off | Both off |
+| **Capture MIDI** | **Replay** (below) | **Wave replay** on / off | Stone life 30 (lower while Wave replay keeps it under the wave gap) |
+| Right column, 1st–7th | — | — | — |
+| 8th (bottom) | **Shift** (hold) | — | — |
+
+**New game** empties the board and starts again from move 0, as the
+situation says: in a game against the players, a fresh game (they open if
+they play black); with auto play on, a new run from a fresh **seed** and
+**variation** (30–90 %), drawn at random and set on their knobs; with a record
+loaded, its start again; otherwise the board is cleared.
+
+**Replay** plays the board again from move 0, and turns **Run game** on so
+it plays at the **Move rate**:
+
+- With **auto play** on, or a loaded record nobody has placed stones on
+  since, that record restarts from its first move — all of it.
+- In a game against the players (**you play**), the moves so far are kept as
+  a record of their own, called *replay*, and played back from move 0. Like
+  loading a file, that ends the game and turns you play off.
+- Otherwise the moves that made the board — the record up to where it
+  stands, then the stones placed by hand since (or a random position's
+  moves) — become that *replay* record. **Loop** decides whether it repeats,
+  and it's saved with the session like a loaded `.sgf`.
+- The button is dark while there's nothing to replay.
 
 There is no play/stop button on the Launchpad. In a DAW the host's transport
 runs the clock. In the standalone app, use **Play** on the PLAY face.
@@ -954,9 +974,10 @@ What the lights mean:
   to do right now (no record to step through, not your move to pass) is dark.
 - **While Shift is held**, the edge shows the second layer: Shift itself and
   the **logo** light green, a button with no second job goes dark, and the
-  switches show their own state (Auto play green while a run is on, and so
-  on). A button being held for its job (Clear, Random, Unload) is **red**
-  until it fires.
+  switches show their own state (You play green while a game is on, and so
+  on).
+- **A top button that's down and has a hold** lights **white** until you let
+  go (a press) or the hold fires.
 
 Worth knowing:
 

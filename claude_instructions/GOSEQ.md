@@ -72,7 +72,7 @@ board: `stoneAt`, `stoneIsSpent`, `lastMove`, `currentStep`, `headPosition`, `he
 | `Source/GoAI.h` | Two player pairs, integer-only, fully deterministic. Generates whole games. |
 | `Source/GoTactics.h` | What the reading players know: chains, ladders, influence, eyes. No playouts, no MCTS — deliberate. |
 | `Source/SgfParser.h` | Game records in and out. |
-| `Source/LaunchpadMap.h` | Pad ↔ board point, and `lpx::edgeButtons`: each edge button's job on both layers (Shift = 19). JUCE-free so it is unit-tested. |
+| `Source/LaunchpadMap.h` | Pad ↔ board point, and `lpx::edgeButtons`: each edge button's press, Shift + press and hold job (Shift = 19). JUCE-free so it is unit-tested. |
 | `Source/RandomPosition.h` | The Random button's game: `moveCount` = points / 3, `settingsFor` (random players, styles, variation, seed; **no opening**). JUCE-free, tested. |
 | `Source/PluginProcessor.*` | Clocks, parameters, state, the board, MIDI generation. |
 | `Source/PluginEditor.*` | The faceplate: two faces (PLAY / PATCH), all controls, the look-and-feel. |
@@ -230,7 +230,8 @@ component laid out once at **1200 x 720** and scaled as a whole by `setTransform
   `lpx::edgeButtons`, one layer at a time: the Shift layer while the device's Shift is held (the
   editor tick polls `launchpad().shiftHeldNow()`) or the mouse is on the drawn Shift key -
   `hitTest` takes the mouse there only, so the port boxes over it still get their clicks.
-  `labelsHeight` (68) is sized for the longest slanted label, `hold: random`.
+  `labelsHeight` (68) has room for a slanted label as long as `hold: random`. The right half of
+  the pads lists the top keys' holds (none on the Shift layer), with Shift on the bottom row.
 - The **Random** pill sits in the RULES row under Clear Board, at its width; the hint was
   shortened to make room.
 - Throwaway render/typed-value harness: `build/snap/` (gitignored), a JUCE console app that writes
@@ -345,8 +346,18 @@ Approved plan at `C:\Users\flori\.claude\plans\valiant-booping-valley.md`.
   moved to Shift+69). Free run left the plugin the same day, so Note (96) is now Tie notes and
   the Launchpad has no transport button. One table, `lpx::edgeButtons` (`LaunchpadMap.h`), drives `handleButton` →
   `perform (Job)`, `buildFrame` → `lightFor (Job)` and `LaunchpadDiagram`; `testEdgeButtons` pins
-  the first layer. A key with no shift job does nothing under Shift. Hold jobs (clear, random,
-  unload) keep the job taken at press. The logo (99) lights while Shift is held - **not yet
+  the map. A key with no shift job does nothing under Shift.
+- **Top-row map** (2026-10-09, the user's): every job on the top row, three per key - press,
+  Shift + press, hold (`EdgeButton::held`, ~0.7 s, no holds under Shift). A key with a hold
+  acts on release (lit white while it waits). The right column is dark except Shift; the jobs
+  that left (tie notes, place, pass, lift last, loop, note, random, players, unload, redraw,
+  life +/-) stay in `Job` and `perform` so they can be mapped again. New processor calls:
+  `replayBoard()` (auto play / untouched record: restart; else the history - record up to its
+  position + `handPlayed` - is written with `sgf::write` and loaded as an .sgf named "replay",
+  which ends auto play / you play) and `newGame()` (match: newMatch; auto play: new random `aiSeed` + `aiVariation` 30-90 written
+  to the params, run restarts at game 1; record: move 0; else clear). Clear Board - faceplate and
+  Launchpad hold - goes through `clearBoardByHand()`: in a match that is `newMatch()`, so they open
+  when they play black (a bare `clearBoard()` left the match waiting on them). `handPlayed` now holds up to 1024 moves. The logo (99) lights while Shift is held - **not yet
   confirmed on hardware**.
 - Protocol note checked against Novation's manual.
 

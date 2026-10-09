@@ -113,6 +113,12 @@ public:
 
     void clearBoard();
 
+    /** Clear Board as the faceplate and the Launchpad mean it: in a game
+        against the players an empty board is a new game, so it is one - with
+        their opening move when they play black, where a bare clear would leave
+        the board waiting on a move nobody makes. */
+    void clearBoardByHand();
+
     /** Clears the board and plays a third of its points out at once, by players
         with a seed, a variation and styles drawn at random (RandomPosition.h).
         It ends whatever owned the board - a record, a run of self-play, a game
@@ -207,6 +213,24 @@ public:
     /** Scrubs the record: the board is rebuilt from the start up to this move. */
     void setGamePosition (int position);
     void nudgeGamePosition (int delta) { setGamePosition (gamePosition() + delta); }
+
+    /** Plays the board again from move 0, with Run Game on. With auto play on,
+        or a record with nothing placed on top of it, that record restarts.
+        Otherwise the moves that made the board - the record up to where it
+        stands, then the stones placed since, or the moves of a game against
+        the players - become a record of their own named "replay", loaded like
+        an .sgf: so it ends auto play and you play, and is saved with the
+        session. Does nothing when there is nothing to play again. */
+    void replayBoard();
+
+    /** Whether replayBoard() has anything to play. */
+    bool canReplay() const noexcept { return aiSelfPlay() || hasGame() || ! handPlayed.empty(); }
+
+    /** An empty board at move 0, as the situation says: in a game against the
+        players a fresh one (they open if they play black); with auto play a
+        new run, from a seed and a variation drawn at random and written to
+        their knobs; with a record, its start again; else a clear. */
+    void newGame();
 
     //==============================================================================
     //  AI self-play: the record is written rather than loaded.
@@ -539,9 +563,11 @@ private:
     int gameMovePosition = 0;                      // guarded by boardLock
 
     //  Stones placed by hand, in the order they were played: where a custom
-    //  opening comes from. Message thread only, and dropped whenever something
-    //  other than a click puts stones on the board.
+    //  opening comes from, and what Replay plays again. Message thread only, and
+    //  dropped whenever something other than a click puts stones on the board.
+    //  Room for a long game on a 19x19, both sides' moves of it.
     std::vector<sgf::Placement> handPlayed;
+    static constexpr int maxHandPlayed = 1024;
 
     //  the opening every game of a run starts from, or count 0 for the book.
     //  Kept as board indices, so it belongs to the size it was played on.

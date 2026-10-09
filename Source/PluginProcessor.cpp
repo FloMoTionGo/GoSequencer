@@ -120,11 +120,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     AudioProcessorValueTreeState::ParameterLayout layout;
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "rate", 1 }, "Rate",
-                                                        rateNames(), 6,
+                                                        rateNames(), 4,
                                                         AudioParameterChoiceAttributes()
-                                                            .withValueFromStringFunction (typedChoice (rateNames(), 6))));
+                                                            .withValueFromStringFunction (typedChoice (rateNames(), 4))));
 
-    layout.add (std::make_unique<AudioParameterInt> (ParameterID { "note", 1 }, "Note", 0, 127, 60,
+    layout.add (std::make_unique<AudioParameterInt> (ParameterID { "note", 1 }, "Note", 0, 127, 48,
                                                      AudioParameterIntAttributes()
                                                          .withStringFromValueFunction ([] (int v, int)
                                                          {
@@ -132,7 +132,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          })
                                                          .withValueFromStringFunction ([] (const String& text)
                                                          {
-                                                             return valuetext::note (text.toStdString()).value_or (60);
+                                                             return valuetext::note (text.toStdString()).value_or (48);
                                                          })));
 
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "gate", 1 }, "Gate",
@@ -192,7 +192,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                         boardSizeNames(), 0));
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "playMode", 1 }, "Mode",
-                                                        playModeNames(), 1));
+                                                        playModeNames(), 0));
 
     //  what a stone's life is counted in: ticks of the clock, or stones laid after it
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "lifeMode", 1 }, "Life Counts",
@@ -200,7 +200,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
 
     //  how long a stone keeps sounding once it lands
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "stoneLife", 1 }, "Stone Life",
-                                                     1, maxStoneLife, 15,
+                                                     1, maxStoneLife, maxStoneLife,
                                                      AudioParameterIntAttributes()
                                                          .withStringFromValueFunction ([] (int v, int)
                                                          {
@@ -209,7 +209,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          })
                                                          .withValueFromStringFunction ([] (const String& text)
                                                          {
-                                                             return valuetext::life (text.toStdString(), maxStoneLife).value_or (15);
+                                                             return valuetext::life (text.toStdString(), maxStoneLife).value_or (maxStoneLife);
                                                          })));
 
     //  the id stays ringSpread so saved sessions keep their value
@@ -223,9 +223,9 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          .withValueFromStringFunction (typedWhole (0, { "semitones", "semitone", "st" }))));
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "gameRate", 1 }, "Move Rate",
-                                                        gameRateNames(), 2,
+                                                        gameRateNames(), 3,
                                                         AudioParameterChoiceAttributes()
-                                                            .withValueFromStringFunction (typedChoice (gameRateNames(), 2))));
+                                                            .withValueFromStringFunction (typedChoice (gameRateNames(), 3))));
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "gameRun", 1 }, "Run Game", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "gameLoop", 1 }, "Loop Game", true));
@@ -278,9 +278,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "aiOpponentColour", 1 }, "Opponent Plays",
                                                         aiOpponentColourNames(), 0));
 
-    //  on by default so existing sessions keep sounding the way they always
-    //  have - fireCell has tied same-colour runs since before this switch existed
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "tieNotes", 1 }, "Tie Notes", true));
+    //  off for a new instance; a session from before the switch existed comes
+    //  back with it on (see setStateInformation), because fireCell tied
+    //  same-colour runs then and that is how the session sounded
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "tieNotes", 1 }, "Tie Notes", false));
 
     return layout;
 }
@@ -615,7 +616,7 @@ go::MoveResult GoSequencerProcessor::playMove (int idx, go::Stone colour, bool b
         //  an opening is a sequence, and this is the only place one is played:
         //  the board itself keeps no order, so it is kept here. Their answers
         //  count too - ten moves of a game are ten moves, whoever played them.
-        if (byHand && (int) handPlayed.size() < 256)
+        if (byHand && (int) handPlayed.size() < maxHandPlayed)
             handPlayed.push_back ({ colour, idx, false });
 
         //  a move is an answer, so a pass no longer stands
@@ -694,6 +695,14 @@ void GoSequencerProcessor::clearBoard()
     matchOver.store (false, std::memory_order_relaxed);
 }
 
+void GoSequencerProcessor::clearBoardByHand()
+{
+    if (matchActive())
+        newMatch();
+    else
+        clearBoard();
+}
+
 juce::String GoSequencerProcessor::randomizePosition()
 {
     //  The draw only picks the game; the game itself is as reproducible as any
@@ -730,7 +739,7 @@ juce::String GoSequencerProcessor::randomizePosition()
 
             //  kept as a sequence, as if played by hand, so Lift Last and From
             //  Board work on it like on any position clicked in
-            if ((int) handPlayed.size() < 256)
+            if ((int) handPlayed.size() < maxHandPlayed)
                 handPlayed.push_back (move);
 
             next = go::other (move.colour);
@@ -1407,6 +1416,100 @@ void GoSequencerProcessor::setGamePosition (int position)
     gamePositionMirror.store (clamped, std::memory_order_relaxed);
 }
 
+void GoSequencerProcessor::replayBoard()
+{
+    const auto run = [this]
+    {
+        if (gameRunParam != nullptr && ! gameRunParam->get())
+        {
+            gameRunParam->beginChangeGesture();
+            gameRunParam->setValueNotifyingHost (1.0f);
+            gameRunParam->endChangeGesture();
+        }
+    };
+
+    //  a record that made the whole board - the auto play game, or a loaded
+    //  one nobody has placed on since - is simply played from its start again,
+    //  all of it, so nothing of the record is lost
+    if (aiSelfPlay() || (hasGame() && handPlayed.empty()))
+    {
+        setGamePosition (0);
+        run();
+        return;
+    }
+
+    sgf::Game history;
+    history.valid = true;
+    history.size = boardSize();
+    history.gameName = "replay";
+
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+
+        if (game.moveCount() > 0 || ! game.setup.empty())
+        {
+            history.setup = game.setup;
+            history.moves.assign (game.moves.begin(),
+                                  game.moves.begin() + juce::jlimit (0, game.moveCount(), gameMovePosition));
+        }
+    }
+
+    history.moves.insert (history.moves.end(), handPlayed.begin(), handPlayed.end());
+
+    if (history.moves.empty() && history.setup.empty())
+        return;
+
+    if (loadSgfText (juce::String (sgf::write (history)), "replay").isEmpty())
+        run();
+}
+
+void GoSequencerProcessor::newGame()
+{
+    if (matchActive())
+    {
+        newMatch();
+    }
+    else if (aiSelfPlay())
+    {
+        //  A new game is a different one, and the run's next game is only that
+        //  in name: the same seed and variation keep the same character. So
+        //  both are drawn again - variation from the Random button's range -
+        //  and written to their knobs, so the game can be found again, and the
+        //  run starts over from them.
+        auto& random = juce::Random::getSystemRandom();
+
+        const auto setTo = [] (juce::AudioParameterInt* parameter, int value)
+        {
+            if (parameter == nullptr)
+                return;
+
+            parameter->beginChangeGesture();
+            parameter->setValueNotifyingHost (parameter->convertTo0to1 ((float) value));
+            parameter->endChangeGesture();
+        };
+
+        if (aiSeedParam != nullptr)
+        {
+            const auto range = aiSeedParam->getRange();
+            int seed = aiSeedParam->get();
+
+            while (seed == aiSeedParam->get())
+                seed = range.getStart() + random.nextInt (range.getLength() + 1);
+
+            setTo (aiSeedParam, seed);
+        }
+
+        setTo (aiVariationParam, randompos::minVariation
+                                     + random.nextInt (randompos::maxVariation - randompos::minVariation + 1));
+
+        startAiSelfPlay (0);
+    }
+    else if (hasGame())
+        setGamePosition (0);
+    else
+        clearBoard();
+}
+
 void GoSequencerProcessor::resetGameLocked()
 {
     rebuildBoardFromGameLocked (0);
@@ -1958,6 +2061,15 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
         auto* players = xml->createNewChildElement ("PARAM");
         players->setAttribute ("id", "aiPlayers");
         players->setAttribute ("value", (int) goai::Players::classic);
+    }
+
+    //  The same for Tie notes, which is off for a new instance: a session from
+    //  before the switch always tied, so it keeps doing so.
+    if (xml->getChildByAttribute ("id", "tieNotes") == nullptr)
+    {
+        auto* tie = xml->createNewChildElement ("PARAM");
+        tie->setAttribute ("id", "tieNotes");
+        tie->setAttribute ("value", 1);
     }
 
     apvts.replaceState (juce::ValueTree::fromXml (*xml));

@@ -196,18 +196,19 @@ private:
     Novation printed its own names on those buttons, and none of them is what
     the button does in this plugin, so the Launchpad section draws the device
     and writes the real job by each one: the top row's above it, slanted, one
-    starting over each key; each side button's in its own row, pointing at it.
-    The left half of the pads is left empty for the two port dropdowns, which
-    the editor lays over it.
+    starting over each key. The right half of the pads lists what holding a
+    top key does, a row each after a small copy of the key, and points at
+    Shift on its own row; the side buttons have no other job for now. The left
+    half is left empty for the two port dropdowns, which the editor lays over it.
 
     The jobs come from lpx::edgeButtons, one layer at a time: the second while
     Shift is held on the device, or while the mouse is on the drawn Shift key -
     the one place the drawing takes the mouse. Clicks anywhere else go straight
-    through. */
+    through. The Shift layer has no holds, so the list is empty then. */
 class LaunchpadDiagram final : public juce::Component
 {
 public:
-    //  labelsHeight: room for the longest slanted job, "hold: random"
+    //  labelsHeight: room for a slanted job as long as "hold: random"
     static constexpr int pitch = 26, padding = 6, labelsHeight = 68, labelsGap = 4;
     static constexpr int sketchSide = 9 * pitch + 2 * padding + 2;
     static constexpr int width = sketchSide, height = labelsHeight + labelsGap + sketchSide;

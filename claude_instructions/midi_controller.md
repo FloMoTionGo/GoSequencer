@@ -30,7 +30,7 @@ on it · `[?]` open question, answer on hardware.
 | Fit rule | `lpx::canShow(size)` = `size == 8` | Exact fit only. The grid stays dark on 9/13/19. |
 | Geometry | `Source/LaunchpadMap.h` (JUCE-free, tested in `testPadMapping`) | `padIndex = (8-row)*10 + col + 1`, scene column, top row, logo. |
 | Protocol | `LaunchpadSurface.cpp` | Programmer-mode SysEx is hard-coded with model byte `0C`; LEDs are `0x90\|type, index, palette`; colours come from the `palette::` constants. |
-| Function map | `lpx::edgeButtons` in `LaunchpadMap.h` (since 2026-10-09) → `handleButton` / `perform (Job)` and `buildFrame` / `lightFor (Job)` | One JUCE-free table: 15 jobs on the first layer, a second layer while **Shift (scene 19)** is held, Redraw moved to Shift+69. Still LPX-only and fixed - not yet profile data. |
+| Function map | `lpx::edgeButtons` in `LaunchpadMap.h` (since 2026-10-09) → `handleButton` / `perform (Job)` and `buildFrame` / `lightFor (Job)` | One JUCE-free table. Since the later 2026-10-09 remap: every job on the top row as press / Shift + press / hold (`EdgeButton::held`), the right column dark except **Shift (scene 19)**. Still LPX-only and fixed - not yet profile data. |
 | Map help | `LaunchpadDiagram` in `PluginEditor.h/.cpp` | Drawn from the same table, one layer at a time (no more hand-synced label arrays). |
 | Persistence | `apvts.state` properties `launchpadIn` / `launchpadOut` | Port names only. No profile or binding is stored. |
 | Input filter | `handleIncomingMidiMessage` | Anything that is not 3 bytes is dropped, **so SysEx replies are thrown away**. Every 3-byte message is queued, so **a Push 2's aftertouch stream would fill the 256-slot queue** (§6.4). |
@@ -286,7 +286,10 @@ persisted** in bindings, so they are append-only and never renamed.
 | *new* `match.new` | press, `newMatch` | — (hold 98 in a match) | usable in a match | 2 | `newItem` |
 
 **The LPX shift layer** (2026-10-09; `lpx::Job` names in brackets) - scene 19 became the `shift`
-role, and these went onto shift + button. Give them ids from this list when the catalogue is built:
+role, and these went onto shift + button. *Superseded the same day by the top-row map (press /
+shift / hold per top key, right column dark): the "on LPX" columns here and above are history -
+`lpx::edgeButtons` is the current map; `holdRandom` / `holdUnload` are now `random` / `unload`,
+on no button.* Give them ids from this list when the catalogue is built:
 
 | id | kind | on LPX | LED role |
 |---|---|---|---|

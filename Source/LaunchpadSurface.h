@@ -159,8 +159,8 @@ private:
     /** Does what an edge button's job says - see lpx::edgeButtons. */
     void perform (lpx::Job);
 
-    /** The palette colour of the button at index while it has this job. */
-    std::uint8_t lightFor (lpx::Job, int index) const;
+    /** The palette colour of a button while it has this job. */
+    std::uint8_t lightFor (lpx::Job) const;
 
     void updateStatus (juce::String);
 
@@ -204,11 +204,11 @@ private:
 
     int refusalIndex = -1, refusalTicks = 0;
 
-    //  Clear, Random and Unload act on a hold, since their buttons sit beside
-    //  ones that are pressed all the time. The job is taken when the button
-    //  goes down, so letting go of Shift halfway does not change what fires.
-    //  heldTicks is -1 while nothing is held, else how many ticks it has been.
-    lpx::Job heldJob = lpx::Job::none;
+    //  A button with a hold job (lpx::EdgeButton::held) waits to see which it
+    //  is: let go before the hold, its press job; held long enough, the hold
+    //  job, and the release does nothing. Both are taken when the button goes
+    //  down. heldTicks is -1 while nothing is held, else how many ticks it has been.
+    lpx::Job tapJob = lpx::Job::none, holdJob = lpx::Job::none;
     int heldIndex = -1, heldTicks = -1;
 
     //  Shift: the message thread's own copy, and one for the editor to read

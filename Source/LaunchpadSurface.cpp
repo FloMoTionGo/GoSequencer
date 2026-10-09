@@ -102,6 +102,26 @@ namespace
         }
     }
 
+    /** Sets a parameter to this value, in its own units. */
+    void setTo (juce::AudioProcessorValueTreeState& state, const char* id, float value)
+    {
+        if (auto* parameter = state.getParameter (id))
+            setParameter (parameter, parameter->convertTo0to1 (value));
+    }
+
+    void switchOff (juce::AudioProcessorValueTreeState& state, const char* id)
+    {
+        if (isOn (state, id))
+            setParameter (state.getParameter (id), 0.0f);
+    }
+
+    /** Back to the value a new instance starts with. */
+    void resetToDefault (juce::AudioProcessorValueTreeState& state, const char* id)
+    {
+        if (auto* parameter = state.getParameter (id))
+            setParameter (parameter, parameter->getDefaultValue());
+    }
+
     juce::StringArray namesOf (const juce::Array<juce::MidiDeviceInfo>& devices)
     {
         juce::StringArray names;
@@ -271,7 +291,7 @@ void LaunchpadSurface::close()
 
     sent.fill ({});
     settleTicks = 0;
-    heldJob = lpx::Job::none;
+    tapJob = holdJob = lpx::Job::none;
     heldIndex = heldTicks = -1;
     shiftHeld = false;
     shiftDown.store (false, std::memory_order_relaxed);
@@ -318,9 +338,9 @@ void LaunchpadSurface::timerCallback()
 
     if (heldTicks >= 0 && ++heldTicks >= holdTickCount)
     {
-        const auto job = heldJob;
+        const auto job = holdJob;
 
-        heldJob = lpx::Job::none;
+        tapJob = holdJob = lpx::Job::none;
         heldIndex = heldTicks = -1;
 
         perform (job);
@@ -431,14 +451,18 @@ void LaunchpadSurface::buildFrame (Frame& frame) const
     for (const auto& button : lpx::edgeButtons)
     {
         const bool second = shiftHeld && button.index != lpx::shiftIndex;
-        lit (button.index, lightFor (second ? button.shifted : button.plain, button.index));
+        lit (button.index, lightFor (second ? button.shifted : button.plain));
     }
+
+    //  a button waiting to see whether it is a press or a hold says so
+    if (heldIndex >= 0)
+        lit (heldIndex, palette::white);
 
     //  the logo says the edge is showing its second layer
     lit (lpx::logoIndex, shiftHeld ? palette::on : palette::off);
 }
 
-std::uint8_t LaunchpadSurface::lightFor (lpx::Job job, int index) const
+std::uint8_t LaunchpadSurface::lightFor (lpx::Job job) const
 {
     using lpx::Job;
 
@@ -446,7 +470,6 @@ std::uint8_t LaunchpadSurface::lightFor (lpx::Job job, int index) const
 
     const auto onOff  = [&state] (const char* id) { return isOn (state, id) ? palette::on : palette::idle; };
     const auto usable = [] (bool b) { return b ? palette::idle : palette::off; };
-    const bool held   = (index == heldIndex);
 
     switch (job)
     {
@@ -463,6 +486,16 @@ std::uint8_t LaunchpadSurface::lightFor (lpx::Job job, int index) const
         case Job::waveReplay:     return onOff ("waveReplay");
         case Job::selfPlay:       return onOff ("aiPlay");
         case Job::tieNotes:       return onOff ("tieNotes");
+        case Job::replay:         return usable (processor.canReplay());
+
+        //  the walk, by colour: spiral red, polyrhythm green, quads out blue,
+        //  quads in a dimmer blue
+        case Job::cycleWalk:
+        {
+            static constexpr std::uint8_t walks[] = { palette::red, palette::green, palette::blue, palette::dimBlue };
+            const auto* mode = dynamic_cast<const juce::AudioParameterChoice*> (state.getParameter ("playMode"));
+            return mode != nullptr ? walks[juce::jlimit (0, 3, mode->getIndex())] : palette::idle;
+        }
 
         //  the colour the next press places, in that colour - in a game the
         //  colours alternate whatever Place says, so the button has nothing to show
@@ -471,9 +504,7 @@ std::uint8_t LaunchpadSurface::lightFor (lpx::Job job, int index) const
                  : processor.colourForNextMove() == go::Stone::black ? palette::blackStone
                                                                      : palette::whiteStone;
 
-        case Job::holdClear:
-        case Job::holdRandom:     return held ? palette::refused : palette::idle;
-        case Job::holdUnload:     return held ? palette::refused : usable (processor.hasGame());
+        case Job::unload:         return usable (processor.hasGame());
 
         case Job::playAgainst:    return processor.matchActive() ? palette::on : palette::idle;
         case Job::pass:           return usable (processor.yourTurn());
@@ -483,9 +514,15 @@ std::uint8_t LaunchpadSurface::lightFor (lpx::Job job, int index) const
         case Job::rateSlower:
         case Job::moveRateFaster:
         case Job::moveRateSlower:
+        case Job::newGame:
+        case Job::resetRate:
+        case Job::resetMoveRate:
+        case Job::clearBoard:
+        case Job::bothOff:
+        case Job::lifeThirty:
+        case Job::random:
         case Job::noteUp:
         case Job::noteDown:
-        case Job::cycleWalk:
         case Job::cyclePlayers:
         case Job::redraw:
         case Job::lifeLonger:
@@ -608,21 +645,28 @@ void LaunchpadSurface::handleButton (int index, bool pressed)
 
     if (! pressed)
     {
-        //  let go before the hold was long enough: nothing happens
+        //  let go before the hold was long enough: it was a press after all
         if (index == heldIndex)
         {
-            heldJob = lpx::Job::none;
+            const auto job = tapJob;
+
+            tapJob = holdJob = lpx::Job::none;
             heldIndex = heldTicks = -1;
+
+            perform (job);
         }
 
-        return;             //  everything else acts the moment it goes down
+        return;             //  everything else acted the moment it went down
     }
 
-    const auto job = lpx::jobFor (index, shiftHeld);
+    //  only without Shift: the Shift layer has no holds, so it acts at once
+    const auto hold = shiftHeld ? lpx::Job::none : lpx::holdJobFor (index);
+    const auto job  = lpx::jobFor (index, shiftHeld);
 
-    if (lpx::isHoldJob (job))
+    if (hold != lpx::Job::none)
     {
-        heldJob = job;
+        tapJob = job;
+        holdJob = hold;
         heldIndex = index;
         heldTicks = 0;
         return;
@@ -643,41 +687,51 @@ void LaunchpadSurface::perform (lpx::Job job)
         //  one lap, so faster is down it - hence the signs look the wrong way round.
         case Job::rateFaster:     stepChoice (state, "rate", +1);           break;
         case Job::rateSlower:     stepChoice (state, "rate", -1);           break;
+        case Job::moveRateFaster: stepChoice (state, "gameRate", -1);       break;
+        case Job::moveRateSlower: stepChoice (state, "gameRate", +1);       break;
+        case Job::cycleWalk:      cycleChoice (state, "playMode");          break;
+        case Job::runGame:        toggle (state, "gameRun");                break;
+        case Job::selfPlay:       toggle (state, "aiPlay");                 break;
+        case Job::replay:         processor.replayBoard();                  break;
+
+        //  ---- with Shift held
         case Job::stepBack:       processor.nudgeGamePosition (-1);         break;
         case Job::stepOn:         processor.nudgeGamePosition (+1);         break;
-        case Job::runGame:        toggle (state, "gameRun");                break;
-        case Job::tieNotes:       toggle (state, "tieNotes");               break;
-        case Job::cyclePlace:     cycleChoice (state, "colourMode");        break;
+        case Job::newGame:        processor.newGame();                      break;
+        case Job::playAgainst:    toggle (state, "aiOpponent");             break;
+        case Job::waveReplay:     toggle (state, "waveReplay");             break;
+
+        //  ---- held
+        case Job::resetRate:      resetToDefault (state, "rate");           break;
+        case Job::resetMoveRate:  resetToDefault (state, "gameRate");       break;
+        case Job::firstMove:      processor.setGamePosition (0);            break;
+        case Job::lastMove:       processor.setGamePosition (processor.gameMoveCount());  break;
 
         //  in a game, an empty board is a new game - which may mean they open
-        case Job::holdClear:
-            if (processor.matchActive())
-                processor.newMatch();
-            else
-                processor.clearBoard();
+        case Job::clearBoard:     processor.clearBoardByHand();             break;
+
+        case Job::bothOff:
+            switchOff (state, "aiPlay");
+            switchOff (state, "aiOpponent");
             break;
 
-        case Job::playAgainst:    toggle (state, "aiOpponent");             break;
+        //  Wave Replay may hold it lower: a life must fit inside the wave gap
+        case Job::lifeThirty:     setTo (state, "stoneLife", 30.0f);        break;
+
+        //  ---- on no button for now
+        case Job::tieNotes:       toggle (state, "tieNotes");               break;
+        case Job::cyclePlace:     cycleChoice (state, "colourMode");        break;
         case Job::pass:           processor.passMove();                     break;
         case Job::liftLast:
             if (processor.eraseAllowed() && processor.lastMove() >= 0)
                 processor.eraseStone (processor.lastMove());
             break;
         case Job::loop:           toggle (state, "gameLoop");               break;
-        case Job::waveReplay:     toggle (state, "waveReplay");             break;
-        case Job::moveRateFaster: stepChoice (state, "gameRate", -1);       break;
-        case Job::moveRateSlower: stepChoice (state, "gameRate", +1);       break;
-
-        //  ---- with Shift held
         case Job::noteUp:         nudge (state, "note", +1);                break;
         case Job::noteDown:       nudge (state, "note", -1);                break;
-        case Job::firstMove:      processor.setGamePosition (0);            break;
-        case Job::lastMove:       processor.setGamePosition (processor.gameMoveCount());  break;
-        case Job::selfPlay:       toggle (state, "aiPlay");                 break;
-        case Job::cycleWalk:      cycleChoice (state, "playMode");          break;
-        case Job::holdRandom:     processor.randomizePosition();            break;
+        case Job::random:         processor.randomizePosition();            break;
         case Job::cyclePlayers:   cycleChoice (state, "aiPlayers");         break;
-        case Job::holdUnload:     processor.clearGame();                    break;
+        case Job::unload:         processor.clearGame();                    break;
         case Job::lifeLonger:     nudge (state, "stoneLife", +1);           break;
         case Job::lifeShorter:    nudge (state, "stoneLife", -1);           break;
 

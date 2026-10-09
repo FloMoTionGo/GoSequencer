@@ -1004,17 +1004,22 @@ void LaunchpadDiagram::paint (juce::Graphics& g)
     //  The jobs come from the table the device itself reads: the top row left
     //  to right is edgeButtons 0 to 7, the right hand column top to bottom 8 to
     //  15. One layer at a time - the second while Shift is held, in the accent,
-    //  with the buttons that have no second job faded.
+    //  with the buttons that have no job on the layer showing faded.
     const bool second = showingShift();
 
-    const auto jobText = [second] (const lpx::EdgeButton& button)
+    const auto onThisLayer = [second] (const lpx::EdgeButton& button)
     {
-        return utf8 (second && button.index != lpx::shiftIndex ? button.shiftedLabel : button.plainLabel);
+        return second && button.index != lpx::shiftIndex;
     };
 
-    const auto unbound = [second] (const lpx::EdgeButton& button)
+    const auto jobText = [onThisLayer] (const lpx::EdgeButton& button)
     {
-        return second && button.index != lpx::shiftIndex && button.shifted == lpx::Job::none;
+        return utf8 (onThisLayer (button) ? button.shiftedLabel : button.plainLabel);
+    };
+
+    const auto unbound = [onThisLayer] (const lpx::EdgeButton& button)
+    {
+        return (onThisLayer (button) ? button.shifted : button.plain) == lpx::Job::none;
     };
 
     const auto jobColour = second ? theme::accent : theme::ink;
@@ -1108,28 +1113,71 @@ void LaunchpadDiagram::paint (juce::Graphics& g)
         for (int col = 0; col < 8; ++col)
             g.fillRoundedRectangle (cell (col, row).reduced (4.0f), 3.0f);
 
-    //  the halves: the ports on the left, the side buttons' jobs on the right
+    //  the halves: the ports on the left, the holds and Shift on the right
     g.setColour (theme::hairline);
     dashedLine (g, { gx + 4.0f * p - 0.5f, gy + p }, { gx + 4.0f * p - 0.5f, gy + 9.0f * p }, 1.0f);
 
-    g.setFont (theme::font (11.5f));
-
-    for (int r = 0; r < 8; ++r)
+    const auto row = [&] (int r)
     {
-        const auto& side = lpx::edgeButtons[(size_t) (8 + r)];
-        auto half = juce::Rectangle<float> (gx + 4.0f * p, gy + (float) (r + 1) * p, 4.0f * p, p).withTrimmedRight (3.0f);
+        return juce::Rectangle<float> (gx + 4.0f * p, gy + (float) (r + 1) * p, 4.0f * p, p).withTrimmedRight (3.0f);
+    };
 
-        //  a pointer at the button in this row
-        const auto pointer = half.removeFromRight (6.0f);
+    //  ---- what holding a top key does: the key, small, then its hold. The
+    //  Shift layer has none, so the list is only there on the first one.
+    if (! second)
+    {
+        int rows = 0;
+
+        for (int i = 0; i < 8; ++i)
+        {
+            const auto& top = lpx::edgeButtons[(size_t) i];
+
+            if (top.held == lpx::Job::none)
+                continue;
+
+            auto line = row (rows++);
+            line.removeFromLeft (13.0f);        //  for the word "hold", below
+
+            key (line.removeFromLeft (p - 6.0f).withSizeKeepingCentre (p - 8.0f, p - 8.0f),
+                 juce::String (i + 1), i < 4 ? i : -1, false, false);
+
+            //  the key above has just set its own font
+            line.removeFromLeft (5.0f);
+            g.setFont (theme::font (11.5f));
+            g.setColour (jobColour);
+            g.drawFittedText (utf8 (top.heldLabel), line.toNearestInt(), juce::Justification::centredLeft, 1, 0.75f);
+        }
+
+        //  "hold", once, running up beside the list
+        if (rows > 0)
+        {
+            const auto column = juce::Rectangle<float> (gx + 4.0f * p + 1.0f, gy + p, 12.0f, (float) rows * p);
+            const auto centre = column.getCentre();
+
+            juce::Graphics::ScopedSaveState state (g);
+            g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, centre.x, centre.y));
+            g.setColour (theme::faintText);
+            g.setFont (theme::font (10.0f));
+            g.drawText ("hold", juce::Rectangle<float> (column.getHeight(), column.getWidth()).withCentre (centre),
+                        juce::Justification::centred, false);
+        }
+    }
+
+    //  ---- and Shift, on its own row, pointed at
+    {
+        auto line = row (7);
+        const auto pointer = line.removeFromRight (6.0f);
         juce::Path triangle;
         triangle.addTriangle (pointer.getX(), pointer.getCentreY() - 4.0f, pointer.getRight(), pointer.getCentreY(),
                               pointer.getX(), pointer.getCentreY() + 4.0f);
-        g.setColour (theme::accent.withAlpha (unbound (side) ? 0.3f : 1.0f));
+        g.setColour (theme::accent);
         g.fillPath (triangle);
 
-        half.removeFromRight (4.0f);
+        line.removeFromRight (4.0f);
         g.setColour (jobColour);
-        g.drawFittedText (jobText (side), half.toNearestInt(), juce::Justification::centredRight, 1, 0.85f);
+        g.setFont (theme::font (11.5f));
+        g.drawFittedText (utf8 (lpx::edgeButtons.back().plainLabel), line.toNearestInt(),
+                          juce::Justification::centredRight, 1, 0.85f);
     }
 }
 
@@ -1178,8 +1226,9 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
 
     setUpButton (pinned, clearButton, "Clear board", [this]
     {
-        processor.clearBoard();
-        showMessage ("board cleared");
+        const bool newGame = processor.matchActive();
+        processor.clearBoardByHand();
+        showMessage (newGame ? "new game" : "board cleared");
         board.repaint();
     });
 
@@ -1513,7 +1562,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
         caption->setBorderSize ({ 0, 3, 0, 3 });
     }
 
-    padsNoteLabel.setText (utf8 ("Above: each top button's job, left to right. Right: each side button's job, on its own row. "
+    padsNoteLabel.setText (utf8 ("Above: each top button's job, left to right. Right: what holding one does. "
                                  "Hold Shift (8) for each one's second job - or point at it here to read them. "
                                  "The pads are the 8 \xc3\x97 8 board: press to place, press a stone to lift it."),
                            juce::dontSendNotification);

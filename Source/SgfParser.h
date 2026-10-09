@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstddef>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "GoBoard.h"
@@ -338,5 +339,66 @@ namespace sgf
 
         game.valid = true;
         return game;
+    }
+
+    /** The other way: a game as SGF text that parse() reads back as the same
+        game - its size, its names, its setup stones and its moves, passes
+        included. Enough for a record the plugin writes itself (a replay) to be
+        saved with a session like one that was loaded. */
+    inline std::string write (const Game& game)
+    {
+        const auto escaped = [] (const std::string& text)
+        {
+            std::string out;
+
+            for (const char c : text)
+            {
+                if (c == ']' || c == '\\')
+                    out += '\\';
+
+                out += c;
+            }
+
+            return out;
+        };
+
+        const auto point = [&game] (const Placement& placement)
+        {
+            if (placement.isPass || placement.index < 0)
+                return std::string();
+
+            return std::string { (char) ('a' + go::colOf (placement.index, game.size)),
+                                 (char) ('a' + go::rowOf (placement.index, game.size)) };
+        };
+
+        std::string text = "(;FF[4]GM[1]SZ[" + std::to_string (game.size) + "]";
+
+        const std::pair<const char*, const std::string*> info[] =
+        {
+            { "GN", &game.gameName }, { "PB", &game.blackName }, { "BR", &game.blackRank },
+            { "PW", &game.whiteName }, { "WR", &game.whiteRank }, { "RE", &game.result },
+            { "DT", &game.date },      { "PC", &game.place },      { "KM", &game.komi },
+        };
+
+        for (const auto& [key, value] : info)
+            if (! value->empty())
+                text += std::string (key) + "[" + escaped (*value) + "]";
+
+        for (const auto colour : { go::Stone::black, go::Stone::white })
+        {
+            std::string stones;
+
+            for (const auto& placement : game.setup)
+                if (placement.colour == colour && ! placement.isPass && placement.index >= 0)
+                    stones += "[" + point (placement) + "]";
+
+            if (! stones.empty())
+                text += (colour == go::Stone::black ? "AB" : "AW") + stones;
+        }
+
+        for (const auto& move : game.moves)
+            text += std::string (move.colour == go::Stone::black ? ";B[" : ";W[") + point (move) + "]";
+
+        return text + ")";
     }
 }

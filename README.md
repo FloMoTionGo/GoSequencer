@@ -129,7 +129,7 @@ refused and the knob keeps what it had.
 | PLAY · VOICE | **Note** | The pitch every stone plays. |
 | | **Spread** | Semitones between one playhead and the next (multi-head modes; faded in Spiral). |
 | | **Gate** | Note length as a percentage of one step. |
-| | **Tie notes** | A run of same-coloured stones under one playhead plays as one held note, not a note per step. On by default. |
+| | **Tie notes** | A run of same-coloured stones under one playhead plays as one held note, not a note per step. Off by default. |
 | | **● black** / **○ white** | Fixed velocity per colour. |
 | PLAY · OUTPUT | **● ○ 1–9** | The MIDI channel of each voice: black and white in Spiral, one per playhead in the multi-head modes. A lamp over each cell lights as that voice plays; the cells the mode doesn't use are faded, and can still be set. |
 | PLAY · RECORD | **Load SGF…** / **Unload** | Load a game record, or let go of it — see [below](#loading-a-game-record-sgf). |
@@ -433,8 +433,9 @@ tracks into clips first. The full walkthrough is in
 
 A Novation **Launchpad X** can be the board. On an **8×8** board — the size of
 its grid — the pads show the stones and the playheads, a press plays a stone,
-and the buttons round the edge run the sequencer: step rate, the loaded game,
-run game, tie notes, playing against the AI, pass, loop and more.
+and the top row of buttons runs the sequencer: step and move rate, the walk,
+the record's position, run game, new game, auto play and you play, replay and
+wave replay.
 
 There's nothing to set up on the Launchpad: no Custom Mode, no Novation
 Components. Go Sequencer puts it into Programmer Mode itself and hands it back
@@ -448,12 +449,14 @@ when it lets go.
    the DAW port, which the pads don't use. The board becomes 8×8 — straight away
    if it's empty, otherwise when you press **Use 8 × 8**.
 
-The bottom button of the right column is **Shift**: held, it gives every other
-edge button a second job — auto play on Session, a random position on a held
-Capture MIDI, the note, the walk, stone life and more.
+Each top button has up to three jobs: a press, a press with **Shift** held
+(Shift is the bottom button of the right column), and a hold — reset the
+rates, jump to the first or last move, clear the board, both players off,
+stone life 30. The rest of the right column has no job for now.
 
-The section draws the Launchpad with each edge button's job written by it (the
-second layer while Shift is held, or while the mouse is on its Shift key), and
+The section draws the Launchpad with each top button's job written by it (the
+second layer while Shift is held, or while the mouse is on its Shift key) and
+lists the holds beside it, and
 the **pads in** / **pads out** dropdowns inside it pick the ports by hand. The
 button map and the rest are in
 [how-to-use-it.md](how-to-use-it.md#11-the-launchpad-x-patch-face).
