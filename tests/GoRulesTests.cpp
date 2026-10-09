@@ -7,6 +7,7 @@
 #include "GoBoard.h"
 #include "LaunchpadMap.h"
 #include "SgfParser.h"
+#include "ValueText.h"
 
 #include <algorithm>
 #include <array>
@@ -1760,6 +1761,42 @@ namespace
         check (goai::chooseReadingMove (hunt, Stone::white, ix (6, 2), shiro, 0, rng, ws) == ix (7, 2),
                "starts the ladder that catches the stone");
     }
+
+    //  What typed text becomes - the value box on every knob, and the host's own
+    //  text entry. JUCE's fallback read "50" on the gate as 100 %, a note name as
+    //  0, "+7" as 0 and "hold" as 1 step.
+    void testValueText()
+    {
+        std::printf ("\ntyped values\n");
+        using namespace valuetext;
+
+        check (note ("C3") == 60 && note ("c3") == 60 && note (" 60 ") == 60, "note: C3, c3 and 60 are middle C");
+        check (note ("C#3") == 61 && note ("Db3") == 61, "note: sharps and flats");
+        check (note ("B3") == 71 && note ("Bb3") == 70 && note ("Eb2") == 51, "note: B and a flat on b");
+        check (note ("C-2") == 0 && note ("G8") == 127, "note: the two ends of the MIDI range");
+        check (! note ("H3") && ! note ("C") && ! note ("C3.5") && ! note ("abc") && ! note (""),
+               "note: not a note is refused, not read as 0");
+
+        check (percent ("50") == 0.5 && percent ("50%") == 0.5 && percent ("50 %") == 0.5, "gate: 50 and 50% are a half");
+        check (percent ("0.25") == 0.25 && percent ("1.0") == 1.0, "gate: a fraction with a point is taken as one");
+        check (percent ("1") == 0.01, "gate: a bare 1 is one percent");
+        check (! percent ("half"), "gate: words are refused");
+
+        check (number ("133.47", { "bpm" }) == 133.47 && number ("96 BPM", { "bpm" }) == 96.0, "tempo: decimals and a unit");
+        check (! number ("1.2.3") && ! number ("+") && ! number ("12x"), "numbers: malformed text is refused");
+
+        check (wholeNumber ("+7", { "st" }) == 7 && wholeNumber ("-12 st", { "st" }) == -12, "spread: signs and the st unit");
+        check (wholeNumber ("7.6") == 8, "whole numbers round");
+
+        check (life ("hold", 128) == 128 && life ("HOLD", 128) == 128, "life: hold is the top value");
+        check (life ("7 steps", 128) == 7 && life ("15", 128) == 15, "life: steps with or without the word");
+
+        const std::vector<std::string> rates { "1/1", "1/2", "1/4", "1/4T", "1/8", "1/8T", "1/16", "1/16T", "1/32" };
+        const std::vector<std::string> moves { "1/4", "1/2", "1 bar", "2 bars", "4 bars", "8 bars", "one lap" };
+        check (choice ("1/8t", rates) == 5 && choice ("1/16", rates) == 6, "rate: names, any case");
+        check (choice ("2bars", moves) == 3 && choice ("One Lap", moves) == 6, "move rate: names, any spacing");
+        check (! choice ("1/64", rates), "rate: an unknown name is refused, not read as the first");
+    }
 }
 
 int main (int argc, char** argv)
@@ -1811,6 +1848,8 @@ int main (int argc, char** argv)
     testTacticsVitalPoints();
     testReadingPlayersKeepTheContract();
     testReadingPlayersRead();
+
+    testValueText();
 
     if (argc > 1)
         testSgfFile (argv[1]);

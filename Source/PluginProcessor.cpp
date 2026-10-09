@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "ValueText.h"
 
 #include <cmath>
 
@@ -85,6 +86,32 @@ namespace
 }
 
 //==============================================================================
+namespace
+{
+    //  What text typed into a value box - the editor's or the host's - means. Left
+    //  to JUCE, "50" on the gate is 100 %, a note name is note 0, "+7" is 0 and
+    //  "hold" is 1 step (see ValueText.h). Text that is no value at all gives the
+    //  default: there is no "unchanged" to return from here, and the editor has
+    //  already refused such text before it gets this far.
+    std::function<int (const juce::String&)> typedChoice (const juce::StringArray& names, int fallback)
+    {
+        std::vector<std::string> list;
+
+        for (const auto& name : names)
+            list.push_back (name.toStdString());
+
+        return [list, fallback] (const juce::String& text) { return valuetext::choice (text.toStdString(), list).value_or (fallback); };
+    }
+
+    std::function<int (const juce::String&)> typedWhole (int fallback, std::vector<std::string> units)
+    {
+        return [units, fallback] (const juce::String& text)
+        {
+            return valuetext::wholeNumber (text.toStdString(), units).value_or (fallback);
+        };
+    }
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::createParameterLayout()
 {
     using namespace juce;
@@ -92,13 +119,19 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     AudioProcessorValueTreeState::ParameterLayout layout;
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "rate", 1 }, "Rate",
-                                                        rateNames(), 6));
+                                                        rateNames(), 6,
+                                                        AudioParameterChoiceAttributes()
+                                                            .withValueFromStringFunction (typedChoice (rateNames(), 6))));
 
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "note", 1 }, "Note", 0, 127, 60,
                                                      AudioParameterIntAttributes()
                                                          .withStringFromValueFunction ([] (int v, int)
                                                          {
                                                              return MidiMessage::getMidiNoteName (v, true, true, 3);
+                                                         })
+                                                         .withValueFromStringFunction ([] (const String& text)
+                                                         {
+                                                             return valuetext::note (text.toStdString()).value_or (60);
                                                          })));
 
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "gate", 1 }, "Gate",
@@ -107,6 +140,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                            .withStringFromValueFunction ([] (float v, int)
                                                            {
                                                                return String (juce::roundToInt (v * 100.0f)) + "%";
+                                                           })
+                                                           .withValueFromStringFunction ([] (const String& text)
+                                                           {
+                                                               return (float) valuetext::percent (text.toStdString()).value_or (0.5);
                                                            })));
 
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "tempo", 1 }, "Free Tempo",
@@ -115,6 +152,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                            .withStringFromValueFunction ([] (float v, int)
                                                            {
                                                                return String (v, 1) + " BPM";
+                                                           })
+                                                           .withValueFromStringFunction ([] (const String& text)
+                                                           {
+                                                               return (float) valuetext::number (text.toStdString(), { "bpm" }).value_or (120.0);
                                                            })));
 
     //  Spiral routes by colour; the multi head modes route by playhead. Every
@@ -156,6 +197,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          {
                                                              return v >= maxStoneLife ? String ("hold")
                                                                                       : String (v) + " steps";
+                                                         })
+                                                         .withValueFromStringFunction ([] (const String& text)
+                                                         {
+                                                             return valuetext::life (text.toStdString(), maxStoneLife).value_or (15);
                                                          })));
 
     //  the id stays ringSpread so saved sessions keep their value
@@ -165,10 +210,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          {
                                                              //  the value box is 62px: "0 semitones" did not fit
                                                              return String (v > 0 ? "+" : "") + String (v) + " st";
-                                                         })));
+                                                         })
+                                                         .withValueFromStringFunction (typedWhole (0, { "semitones", "semitone", "st" }))));
 
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "gameRate", 1 }, "Move Rate",
-                                                        gameRateNames(), 2));
+                                                        gameRateNames(), 2,
+                                                        AudioParameterChoiceAttributes()
+                                                            .withValueFromStringFunction (typedChoice (gameRateNames(), 2))));
 
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "gameRun", 1 }, "Run Game", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "gameLoop", 1 }, "Loop Game", true));
@@ -189,7 +237,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          .withStringFromValueFunction ([] (int v, int)
                                                          {
                                                              return String (v) + " mv";
-                                                         })));
+                                                         })
+                                                         .withValueFromStringFunction (typedWhole (60, { "moves", "move", "mv" }))));
 
     //  0 is one game repeating; 100 is a different middlegame every time
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "aiVariation", 1 }, "AI Variation",
@@ -198,7 +247,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          .withStringFromValueFunction ([] (int v, int)
                                                          {
                                                              return String (v) + "%";
-                                                         })));
+                                                         })
+                                                         .withValueFromStringFunction (typedWhole (35, { "%" }))));
 
     //  names the run: the same seed is the same games, in the same order
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "aiSeed", 1 }, "AI Seed", 1, 999, 1));

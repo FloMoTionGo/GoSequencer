@@ -74,7 +74,8 @@ board: `stoneAt`, `stoneIsSpent`, `lastMove`, `currentStep`, `headPosition`, `he
 | `Source/SgfParser.h` | Game records in and out. |
 | `Source/LaunchpadMap.h` | Pad ↔ board point. JUCE-free so it is unit-tested. |
 | `Source/PluginProcessor.*` | Clocks, parameters, state, the board, MIDI generation. |
-| `Source/PluginEditor.*` | Hand-rolled tabs, all controls, the theme. |
+| `Source/PluginEditor.*` | The faceplate: two faces (PLAY / PATCH), all controls, the look-and-feel. |
+| `Source/ValueText.h` | Typed text back into values (note names, `50%`, `hold`, `+7`, choice names). JUCE-free, tested. |
 | `Source/BoardComponent.*` | The board view, mouse input, and `namespace theme` (all colours). |
 | `Source/MidiPortOut.*` | Direct hardware/virtual MIDI out, bypassing the host. **The model for any device class.** |
 | `tests/GoRulesTests.cpp` | Plain C++17, no JUCE. The only automated check there is. |
@@ -156,7 +157,8 @@ onto the live board under a try-lock).
 1. **Automatable** → an APVTS parameter. Persists free via `copyState()`. Append-only for choices.
 2. **Machine-local, not automatable** (device names, view state) → a `ValueTree` property on
    `apvts.state`. Precedent and rationale at `PluginProcessor.cpp:53-55`: *"it is a device on this
-   machine, not something to automate"*. Existing: `midiOutPort`, `activeTab`, `darkMode`. Rides
+   machine, not something to automate"*. Existing: `midiOutPort`, `panelFace`, `darkMode` (and the
+   unused `activeTab` of the old tabbed editor, left in old sessions). Rides
    along in `getStateInformation` for free; only the *reopen* needs a hook (`cpp:1653-1664`).
 3. **Derived board data** → an XML attribute in `getStateInformation` (`cpp:1494-1535`), read back
    in `setStateInformation`. Existing: `board`, `boardSizeValue`, `gamePosition`, `aiGame`,
@@ -169,14 +171,30 @@ the pattern to copy when adding a parameter that old sessions lack.
 
 ## Editor
 
-Tabs are **hand-rolled**, not `juce::TabbedComponent`: `enum Tab` (`PluginEditor.h:86`) drives
-`tabCount`, the `tabNames` literal (`cpp:334`) and two `std::array`s. `addToTab` / `showTab`
-(`cpp:539-564`) just flip visibility. `pinned = -1` means "always visible beside the board".
+Branch `ui-faceplate` (2026-10-06) replaced the six tabs with a **faceplate**: one `Faceplate`
+component laid out once at **1200 x 720** and scaled as a whole by `setTransform` in `resized()`
+(fixed aspect ratio, 80-150 %). Everything is a child of `plate`, not of the editor.
 
-- The active tab is saved as a **raw int** (`activeTab`) → **append new tabs at the end**.
-- `resized()` lays **every** tab into the same rectangle whether visible or not; each block opens
-  `auto rows = column;` (`cpp:868-990`).
-- Control builders: `setUpCaption/Text/Slider/Combo/Toggle/Button` (`cpp:587-656`).
+- **Two faces**, `enum Face { pinned = -1, playFace, patchFace }`. `addToFace` / `showFace` just
+  flip visibility; pinned = the top bar, the board and its strip. The face is saved as a raw int
+  (`panelFace`) → **append new faces at the end**. Section frames, the display (LCD), the wordmark
+  and the screws are *painted* by `paintPlate` from the `sections` list `resized()` builds.
+- Controls: `Knob` (a `Slider` - rotary, or `LinearBarVertical` for a patch-bay cell) whose
+  `getValueFromText` runs a `parse` function from `ValueText.h` and **keeps the old value** for
+  text that is no value (JUCE's default would read it as the minimum). `SegmentedChoice` for
+  choice parameters with few items, bound by `juce::ParameterAttachment`; each segment carries the
+  parameter **index**, so the order on screen may differ (board sizes show 8 9 13 19). LEDs are
+  `TextButton`s with the `goLed` property. Builders: `setUpKnob/Cell/Segments/Led/Button/Caption/Text`.
+- The parameters themselves carry `withValueFromStringFunction` (same parsers), so the host's own
+  text entry understands `C3`, `50%`, `hold`, `+7` too.
+- `ActivityLamps` polls the lock-free read surface on its own 30 Hz timer: a head that moved onto a
+  live stone has just played it.
+- Grey-outs follow `refreshModeDisplay()`, keyed on **mode + board size** (`lastModeKeyShown`),
+  which fixes the old `headCount()`-keyed trap below.
+- `LaunchpadDiagram` is a static legend: the 16 edge-button jobs written across the pads (top row
+  on the left half with its button's mark, each side button's job in its own row), pads faint.
+- Throwaway render/typed-value harness: `build/snap/` (gitignored), a JUCE console app that writes
+  `shots/*.png` per face and scheme and types into the real value boxes.
 - Timers: editor 20 Hz, `BoardComponent` 30 Hz (`BoardComponent::timerCallback`). Nothing pushes;
   everything polls - and repaints only what changed: the editor header only when its text or the
   next-stone colour reads differently.
@@ -236,9 +254,9 @@ generator, not an insert. Device-level input goes through `juce::MidiInput`, not
   `tools/` is gitignored and untracked.
 - **The ctest case points at a missing file** (`CMakeLists.txt:78`). `build.ps1` sidesteps it by
   running the exe with no argument. Prefer `build.ps1` over `ctest`.
-- **Editor change-detection keys on `headCount()`, not the mode** (`PluginEditor.cpp:1002-1023`).
-  Quads out, Quads in and Polyrhythm-on-9×9 all return 4, so switching between them fires no
-  refresh. Noted in `ideas.md:22-25`.
+- **Editor change-detection keyed on `headCount()`, not the mode** - main only. Quads out, Quads in
+  and Polyrhythm-on-9×9 all return 4, so switching between them fired no refresh. Fixed on
+  `ui-faceplate` (`refreshModeDisplay`, keyed on mode + size).
 - **A board size change clears the board** (`applyBoardSize`, `cpp:643-682`). Anything that
   changes size programmatically is destructive — confirm first.
 - **`handPlayed` is not the board.** An opening is a *sequence*, because order decides what is

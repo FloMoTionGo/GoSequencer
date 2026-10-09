@@ -1,87 +1,52 @@
 #include "PluginEditor.h"
+#include "ValueText.h"
 
 #include <cmath>
+#include <numeric>
 
 //==============================================================================
 namespace
 {
-    constexpr int captionHeight = 16, controlHeight = 24;
-    constexpr int cellHeight = captionHeight + controlHeight;
-    constexpr int rowGap = 14, columnGutter = 24, pillGap = 8;
-    constexpr int margin = 28, columnGap = 44;
-    constexpr int minControlsWidth = 400, maxControlsWidth = 560;
-    constexpr int titleHeight = 22, statusHeight = 18, tabHeight = 26, tabGap = 24, headerGap = 18;
-    constexpr int textLinesHeight = 36;         //  two lines of the value font
-    constexpr int narrowValueWidth = 36;        //  a MIDI channel needs two digits
-    constexpr int stepButtonWidth = 36;
+    constexpr int captionHeight = 14, controlHeight = 24, valueHeight = 16;
+    constexpr int knobWidth = 84, knobHeight = 76;          //  caption, dial, value
+    constexpr int ledHeight = 22, segmentHeight = 26;
+    constexpr int pillGap = 6, stepButtonWidth = 30;
+    constexpr int sectionPadX = 14, sectionPadTop = 18, sectionPadBottom = 12, sectionGap = 14;
 
-    //  a button carrying this property is drawn as a tab rather than a switch
-    const juce::Identifier tabProperty { "goTab" };
-
-    //  the open tab rides along in the state, so a session comes back on it
-    const juce::Identifier activeTabProperty { "activeTab" };
+    //  the open face rides along in the state, so a session comes back on it
+    const juce::Identifier panelFaceProperty { "panelFace" };
 
     //  so does the light/dark choice
     const juce::Identifier darkModeProperty { "darkMode" };
 
-    juce::Font captionFont() { return theme::font (11.0f, juce::Font::plain, 0.06f); }
+    //  how a button is drawn: an LED switch, rather than an outlined pill
+    const juce::Identifier ledProperty { "goLed" };
+
+    //  how a knob is drawn: from the middle (spread), or with a tick per choice
+    const juce::Identifier bipolarProperty { "goBipolar" };
+    const juce::Identifier detentProperty  { "goDetents" };
+
+    juce::Font captionFont() { return theme::font (10.5f, juce::Font::plain, 0.08f); }
     juce::Font valueFont()   { return theme::font (12.5f); }
     juce::Font pillFont()    { return theme::font (11.0f, juce::Font::plain, 0.05f); }
-    juce::Font tabFont()     { return theme::font (12.5f, juce::Font::plain, 0.06f); }
-    juce::Font titleFont()   { return theme::font (16.0f, juce::Font::bold, 0.04f); }
-    juce::Font statusFont()  { return theme::font (12.0f); }
+    juce::Font ledFont()     { return theme::font (13.0f); }
+    juce::Font titleFont()   { return theme::font (17.0f, juce::Font::bold, 0.16f); }
+    juce::Font sectionFont() { return theme::font (10.5f, juce::Font::bold, 0.18f); }
 
     int textWidth (const juce::Font& font, const juce::String& text)
     {
         return (int) std::ceil (juce::GlyphArrangement::getStringWidth (font, text));
     }
 
-    //  switches and buttons are as wide as what they say, not as wide as the cell
+    //  outlined buttons are as wide as what they say, not as wide as the space
     int pillWidth (const juce::Button& button)
     {
-        return textWidth (pillFont(), button.getButtonText().toUpperCase()) + 28;
+        return textWidth (pillFont(), button.getButtonText().toUpperCase()) + 24;
     }
 
-    std::vector<juce::Rectangle<int>> columns (juce::Rectangle<int> row, int count)
+    int ledWidth (const juce::Button& button)
     {
-        std::vector<juce::Rectangle<int>> cells;
-        const int width = (row.getWidth() - columnGutter * (count - 1)) / count;
-
-        for (int i = 0; i < count; ++i)
-        {
-            cells.push_back (i == count - 1 ? row : row.removeFromLeft (width));
-            row.removeFromLeft (columnGutter);
-        }
-
-        return cells;
-    }
-
-    juce::Rectangle<int> nextRow (juce::Rectangle<int>& area, int height)
-    {
-        auto row = area.removeFromTop (height);
-        area.removeFromTop (rowGap);
-        return row;
-    }
-
-    void placeLabelled (juce::Rectangle<int> cell, juce::Label& caption, juce::Component& control)
-    {
-        caption.setBounds (cell.removeFromTop (captionHeight));
-        control.setBounds (cell.removeFromTop (controlHeight));
-    }
-
-    //  the slider takes the whole cell - its value sits on the caption's line,
-    //  right aligned - and the caption keeps the part of the line left of it
-    void placeSlider (juce::Rectangle<int> cell, juce::Label& caption, juce::Slider& slider)
-    {
-        slider.setBounds (cell.withHeight (cellHeight));
-        caption.setBounds (cell.removeFromTop (captionHeight).withTrimmedRight (slider.getTextBoxWidth()));
-    }
-
-    //  a switch in a cell whose neighbours have captions: on the control line
-    void placeControl (juce::Rectangle<int> cell, juce::Button& button)
-    {
-        cell.removeFromTop (captionHeight);
-        button.setBounds (cell.removeFromTop (controlHeight).withWidth (juce::jmin (cell.getWidth(), pillWidth (button))));
+        return textWidth (ledFont(), button.getButtonText()) + 22;
     }
 
     /** Buttons side by side from the left, each at its own width. */
@@ -93,137 +58,105 @@ namespace
             row.removeFromLeft (pillGap);
         }
     }
-}
 
-//==============================================================================
-void LaunchpadDiagram::paint (juce::Graphics& g)
-{
-    //  The top row left to right, then the right hand column top to bottom -
-    //  the order LaunchpadSurface::handleButton gives them their jobs in.
-    static const char* const topJobs[8]  = { "rate +", "rate -", "step back", "step on",
-                                             "run game", "free run", "place", "hold: clear" };
-    static const char* const sideJobs[8] = { "play vs AI", "pass", "lift last", "loop",
-                                             "wave replay", "move rate +", "move rate -", "redraw" };
-
-    //  lettered at 175% of the captions elsewhere: this is a map to be read at
-    //  a glance from a Launchpad in the hands, not a label beside a control
-    const auto font = captionFont().withHeight (captionFont().getHeight() * 1.75f);
-    const float lineHeight = font.getHeight() + 2.0f;
-    const float gap = 8.0f, footerHeight = 2.0f * lineHeight;
-
-    //  room for the longest label on each side: the top ones stand on end
-    float sideWidth = 0.0f, topHeight = 0.0f;
-
-    for (auto* job : sideJobs) sideWidth = juce::jmax (sideWidth, (float) textWidth (font, job));
-    for (auto* job : topJobs)  topHeight = juce::jmax (topHeight, (float) textWidth (font, job));
-
-    const auto area = getLocalBounds().toFloat();
-
-    //  the pitch of one pad: as big as the space allows, and no bigger than a
-    //  drawing needs to be read
-    const float pitch = juce::jmin (40.0f,
-                                    (area.getWidth() - gap - sideWidth) / 9.0f,
-                                    (area.getHeight() - topHeight - 2.0f * gap - footerHeight) / 9.0f);
-
-    if (pitch < 9.0f)
-        return;             //  too little room to draw anything worth reading
-
-    //  centred in the space it is given, labels and all
-    const float blockWidth  = 9.0f * pitch + gap + sideWidth;
-    const float blockHeight = topHeight + gap + 9.0f * pitch + gap + footerHeight;
-    const float gridX = area.getCentreX() - blockWidth * 0.5f;
-    const float gridY = area.getCentreY() - blockHeight * 0.5f + topHeight + gap;
-
-    const auto cell = [&] (int col, int row)
+    /** The same, packed against the right hand edge. */
+    void flowRight (juce::Rectangle<int> row, std::initializer_list<juce::Button*> buttons)
     {
-        return juce::Rectangle<float> (gridX + (float) col * pitch, gridY + (float) row * pitch, pitch, pitch)
-                 .reduced (pitch * 0.1f);
-    };
+        std::vector<juce::Button*> list (buttons);
 
-    const float corner = pitch * 0.14f;
-
-    //  the body
-    g.setColour (theme::hairline);
-    g.drawRoundedRectangle (juce::Rectangle<float> (gridX, gridY, 9.0f * pitch, 9.0f * pitch).expanded (pitch * 0.18f),
-                            pitch * 0.25f, 1.0f);
-
-    //  the 8x8 grid - the board itself
-    for (int row = 1; row <= 8; ++row)
-    {
-        for (int col = 0; col < 8; ++col)
+        for (auto it = list.rbegin(); it != list.rend(); ++it)
         {
-            g.setColour (theme::boardFill);
-            g.fillRoundedRectangle (cell (col, row), corner);
-            g.setColour (theme::gridLine);
-            g.drawRoundedRectangle (cell (col, row), corner, 1.0f);
+            (*it)->setBounds (row.removeFromRight (pillWidth (**it)));
+            row.removeFromRight (pillGap);
         }
     }
 
-    //  the buttons round the edge, in the playhead's colour so they stand out
-    //  from the pads
-    const auto edgeButton = [&] (juce::Rectangle<float> r)
+    /** A knob in a cell: its caption over it, its value under it. */
+    void placeKnob (juce::Rectangle<int> cell, juce::Label& caption, juce::Slider& knob)
     {
-        g.setColour (theme::accent.withAlpha (0.12f));
-        g.fillRoundedRectangle (r, corner);
-        g.setColour (theme::accent.withAlpha (0.8f));
-        g.drawRoundedRectangle (r, corner, 1.2f);
-    };
-
-    for (int i = 0; i < 8; ++i)
-    {
-        edgeButton (cell (i, 0));
-        edgeButton (cell (8, i + 1));
+        caption.setBounds (cell.removeFromTop (captionHeight));
+        knob.setBounds (cell.removeFromTop (knobHeight - captionHeight));
     }
 
-    //  the logo, top right, which does nothing here
-    g.setColour (theme::faintText);
-    g.fillEllipse (cell (8, 0).reduced (pitch * 0.22f));
-
-    //  the first four of the top row are arrows on the device, so they are here
+    juce::Rectangle<int> knobCell (juce::Rectangle<int>& row)
     {
-        g.setColour (theme::accent);
+        return row.removeFromLeft (knobWidth);
+    }
 
-        for (int i = 0; i < 4; ++i)
+    //  ---- what typed text means, per knob - see ValueText.h ----------------
+    using Parse = std::function<std::optional<double> (const juce::String&)>;
+
+    template <typename Fn>
+    Parse parser (Fn fn)
+    {
+        return [fn] (const juce::String& text) -> std::optional<double>
         {
-            const auto c = cell (i, 0).getCentre();
-            const float s = pitch * 0.2f;
-            juce::Path arrow;
-            arrow.addTriangle (0.0f, -s, s, s * 0.7f, -s, s * 0.7f);     //  pointing up
+            if (auto v = fn (text.toStdString()))
+                return (double) *v;
 
-            static constexpr float turns[4] = { 0.0f, 1.0f, -0.5f, 0.5f };  //  up, down, left, right
-            arrow.applyTransform (juce::AffineTransform::rotation (turns[i] * juce::MathConstants<float>::pi)
-                                    .translated (c.x, c.y));
-            g.fillPath (arrow);
-        }
+            return std::nullopt;
+        };
     }
 
-    g.setFont (font);
-    g.setColour (theme::ink);
-
-    //  top row: each job stands on end above its button, reading upward
-    for (int i = 0; i < 8; ++i)
+    Parse wholeParser (std::vector<std::string> units = {})
     {
-        const float x = gridX + ((float) i + 0.5f) * pitch;
-        const float y = gridY - gap;
-
-        juce::Graphics::ScopedSaveState state (g);
-        g.addTransform (juce::AffineTransform::rotation (-juce::MathConstants<float>::halfPi, x, y));
-        g.drawText (topJobs[i], juce::Rectangle<float> (x, y - lineHeight * 0.5f, topHeight, lineHeight),
-                    juce::Justification::centredLeft, false);
+        return parser ([units] (const std::string& t) { return valuetext::wholeNumber (t, units); });
     }
 
-    //  right hand column: each job beside its button
-    for (int i = 0; i < 8; ++i)
-        g.drawText (sideJobs[i],
-                    juce::Rectangle<float> (gridX + 9.0f * pitch + gap, gridY + (float) (i + 1) * pitch, sideWidth + 2.0f, pitch),
-                    juce::Justification::centredLeft, false);
+    Parse choiceParser (const juce::StringArray& names)
+    {
+        std::vector<std::string> list;
 
-    //  and the grid, under the drawing
-    g.setColour (theme::dimText);
-    //  two lines' room, since at this size the sentence outgrows a narrow window
-    g.drawFittedText ("pads: the 8 x 8 board - press to place, press a stone to lift it",
-                      juce::Rectangle<float> (area.getX(), gridY + 9.0f * pitch + gap, area.getWidth(), footerHeight).toNearestInt(),
-                      juce::Justification::centredTop, 2, 1.0f);
+        for (const auto& name : names)
+            list.push_back (name.toStdString());
+
+        return parser ([list] (const std::string& t) { return valuetext::choice (t, list); });
+    }
+
+    //  ---- the four mode pictures: a square spiral, nested rings, and the four
+    //  quadrants with a dot where their walk ends ----------------------------
+    void drawModeIcon (juce::Graphics& g, juce::Rectangle<float> area, int mode)
+    {
+        const float side = juce::jmin (area.getWidth(), area.getHeight(), 22.0f);
+        const auto box = juce::Rectangle<float> (side, side).withCentre (area.getCentre());
+        const float u = side / 22.0f;
+        const auto at = [&] (float x, float y) { return juce::Point<float> (box.getX() + x * u, box.getY() + y * u); };
+        const juce::PathStrokeType stroke (1.4f);
+
+        juce::Path path;
+
+        if (mode == 0)
+        {
+            path.startNewSubPath (at (3, 3));
+
+            for (auto p : { juce::Point<float> (19, 3), { 19, 19 }, { 7, 19 }, { 7, 7 }, { 15, 7 }, { 15, 15 }, { 11, 15 } })
+                path.lineTo (at (p.x, p.y));
+
+            g.strokePath (path, stroke);
+            return;
+        }
+
+        if (mode == 1)
+        {
+            for (float inset : { 2.5f, 6.5f, 10.0f })
+                path.addRectangle (juce::Rectangle<float> (at (inset, inset), at (22 - inset, 22 - inset)));
+
+            g.strokePath (path, stroke);
+            return;
+        }
+
+        for (auto origin : { juce::Point<float> (2.5f, 2.5f), { 12.0f, 2.5f }, { 2.5f, 12.0f }, { 12.0f, 12.0f } })
+            path.addRectangle (juce::Rectangle<float> (at (origin.x, origin.y), at (origin.x + 7.5f, origin.y + 7.5f)));
+
+        g.strokePath (path, stroke);
+
+        //  quads out end on the outer corners, quads in on the inner ones
+        const bool outward = (mode == 2);
+        const float a = outward ? 4.6f : 7.9f, b = outward ? 17.4f : 14.1f;
+
+        for (auto p : { juce::Point<float> (a, a), { b, a }, { a, b }, { b, b } })
+            g.fillEllipse (juce::Rectangle<float> (2.6f * u, 2.6f * u).withCentre (at (p.x, p.y)));
+    }
 }
 
 //==============================================================================
@@ -237,6 +170,9 @@ void GoLookAndFeel::applyColours()
 {
     setColour (juce::ResizableWindow::backgroundColourId,     theme::background);
     setColour (juce::Label::textColourId,                     theme::ink);
+    setColour (juce::Label::backgroundWhenEditingColourId,    theme::background);
+    setColour (juce::Label::textWhenEditingColourId,          theme::ink);
+    setColour (juce::Label::outlineWhenEditingColourId,       theme::accent);
 
     setColour (juce::Slider::textBoxTextColourId,             theme::ink);
     setColour (juce::Slider::textBoxBackgroundColourId,       juce::Colours::transparentWhite);
@@ -244,8 +180,11 @@ void GoLookAndFeel::applyColours()
     setColour (juce::Slider::textBoxHighlightColourId,        theme::hairline);
 
     setColour (juce::TextEditor::textColourId,                theme::ink);
+    setColour (juce::TextEditor::backgroundColourId,          theme::background);
     setColour (juce::TextEditor::highlightColourId,           theme::hairline);
-    setColour (juce::TextEditor::focusedOutlineColourId,      theme::hairline);
+    setColour (juce::TextEditor::highlightedTextColourId,     theme::ink);
+    setColour (juce::TextEditor::outlineColourId,             theme::accent);
+    setColour (juce::TextEditor::focusedOutlineColourId,      theme::accent);
     setColour (juce::CaretComponent::caretColourId,           theme::ink);
 
     setColour (juce::ComboBox::textColourId,                  theme::ink);
@@ -269,46 +208,54 @@ void GoLookAndFeel::drawButtonBackground (juce::Graphics& g, juce::Button& butto
                                           bool shouldDrawButtonAsHighlighted, bool shouldDrawButtonAsDown)
 {
     const auto bounds = button.getLocalBounds().toFloat();
+    const bool enabled = button.isEnabled();
 
-    if (button.getProperties().contains (tabProperty))
+    if (button.getProperties().contains (ledProperty))
     {
-        //  a tab has no face: the open one is underlined, as far as its text runs
+        //  an LED: a ring when off, lit in the accent when on - nothing else
+        const auto lamp = juce::Rectangle<float> (9.0f, 9.0f).withCentre ({ bounds.getX() + 5.5f, bounds.getCentreY() });
+        const float alpha = enabled ? 1.0f : 0.4f;
+
         if (button.getToggleState())
         {
-            const auto width = (float) textWidth (tabFont(), button.getButtonText().toUpperCase());
-
-            g.setColour (theme::ink);
-            g.fillRect (juce::Rectangle<float> (bounds.getX(), bounds.getBottom() - 1.5f, width, 1.5f));
+            g.setColour (theme::accent.withAlpha (0.28f * alpha));
+            g.fillEllipse (lamp.expanded (3.0f));
+            g.setColour (theme::accent.withMultipliedAlpha (alpha));
+            g.fillEllipse (lamp);
+        }
+        else
+        {
+            g.setColour ((shouldDrawButtonAsHighlighted ? theme::dimText : theme::faintText).withMultipliedAlpha (alpha));
+            g.drawEllipse (lamp.reduced (0.65f), 1.3f);
         }
 
         return;
     }
 
     const auto face = bounds.reduced (0.5f);
-    const bool enabled = button.isEnabled();
 
     if (button.getToggleState())
     {
         g.setColour (theme::accent.withMultipliedAlpha (! enabled ? 0.4f : (shouldDrawButtonAsDown ? 0.85f : 1.0f)));
-        g.fillRoundedRectangle (face, 2.0f);
+        g.fillRoundedRectangle (face, 4.0f);
     }
     else
     {
         if (shouldDrawButtonAsDown)
         {
             g.setColour (theme::boardFill);
-            g.fillRoundedRectangle (face, 2.0f);
+            g.fillRoundedRectangle (face, 4.0f);
         }
 
         g.setColour (! enabled ? theme::hairline.withMultipliedAlpha (0.6f)
                                : (shouldDrawButtonAsHighlighted ? theme::faintText : theme::hairline));
-        g.drawRoundedRectangle (face, 2.0f, 1.0f);
+        g.drawRoundedRectangle (face, 4.0f, 1.0f);
     }
 
     if (button.hasKeyboardFocus (false))
     {
         g.setColour (theme::ink);
-        g.drawRoundedRectangle (face, 2.0f, 1.0f);
+        g.drawRoundedRectangle (face, 4.0f, 1.0f);
     }
 }
 
@@ -320,19 +267,18 @@ juce::Font GoLookAndFeel::getTextButtonFont (juce::TextButton&, int)
 void GoLookAndFeel::drawButtonText (juce::Graphics& g, juce::TextButton& button,
                                     bool shouldDrawButtonAsHighlighted, bool)
 {
-    const auto text = button.getButtonText().toUpperCase();
     const bool on = button.getToggleState();
 
-    if (button.getProperties().contains (tabProperty))
+    if (button.getProperties().contains (ledProperty))
     {
-        const bool lit = shouldDrawButtonAsHighlighted || button.hasKeyboardFocus (false);
-
-        g.setFont (tabFont());
-        g.setColour (on ? theme::ink : (lit ? theme::dimText : theme::faintText));
-        g.drawText (text, button.getLocalBounds().withTrimmedBottom (5), juce::Justification::centredLeft, false);
+        g.setFont (ledFont());
+        g.setColour (button.isEnabled() ? theme::ink : theme::faintText);
+        g.drawText (button.getButtonText(), button.getLocalBounds().withTrimmedLeft (18),
+                    juce::Justification::centredLeft, false);
         return;
     }
 
+    const auto text = button.getButtonText().toUpperCase();
     auto colour = on ? theme::background : (shouldDrawButtonAsHighlighted ? theme::ink : theme::dimText);
 
     if (! button.isEnabled() && ! on)
@@ -385,6 +331,21 @@ void GoLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width
                                       float sliderPos, float minSliderPos, float maxSliderPos,
                                       juce::Slider::SliderStyle style, juce::Slider& slider)
 {
+    const bool enabled = slider.isEnabled();
+
+    if (style == juce::Slider::LinearBarVertical)
+    {
+        //  a patch-bay cell: a box round its number, the number being the text box
+        const auto box = slider.getLocalBounds().toFloat().reduced (0.5f);
+
+        g.setColour (theme::well.withMultipliedAlpha (enabled ? 1.0f : 0.5f));
+        g.fillRoundedRectangle (box, 4.0f);
+        g.setColour (! enabled ? theme::hairline.withMultipliedAlpha (0.6f)
+                               : (slider.isMouseOverOrDragging() ? theme::faintText : theme::hairline));
+        g.drawRoundedRectangle (box, 4.0f, 1.0f);
+        return;
+    }
+
     if (style != juce::Slider::LinearHorizontal)
     {
         LookAndFeel_V4::drawLinearSlider (g, x, y, width, height, sliderPos, minSliderPos, maxSliderPos, style, slider);
@@ -392,7 +353,6 @@ void GoLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width
     }
 
     //  a hairline across the whole cell, filled up to a small dot
-    const bool enabled = slider.isEnabled();
     const float centreY = (float) y + (float) height * 0.5f;
 
     g.setColour (theme::hairline);
@@ -403,6 +363,63 @@ void GoLookAndFeel::drawLinearSlider (juce::Graphics& g, int x, int y, int width
 
     const float diameter = (enabled && slider.isMouseOverOrDragging()) ? 10.0f : 8.0f;
     g.fillEllipse (juce::Rectangle<float> (diameter, diameter).withCentre ({ sliderPos, centreY }));
+}
+
+void GoLookAndFeel::drawRotarySlider (juce::Graphics& g, int x, int y, int width, int height,
+                                      float position, float startAngle, float endAngle, juce::Slider& slider)
+{
+    const bool enabled = slider.isEnabled();
+    const float alpha = enabled ? 1.0f : 0.38f;
+    const auto area = juce::Rectangle<float> ((float) x, (float) y, (float) width, (float) height);
+    const float radius = juce::jmin (17.0f, juce::jmin (area.getWidth(), area.getHeight()) * 0.5f - 3.0f);
+    const auto centre = area.getCentre();
+    const float angle = startAngle + position * (endAngle - startAngle);
+
+    const auto pointAt = [&] (float a, float r)
+    {
+        return centre.getPointOnCircumference (r, a);
+    };
+
+    //  a tick per choice on a knob that steps through names
+    if (slider.getProperties().contains (detentProperty))
+    {
+        const int steps = juce::roundToInt ((slider.getMaximum() - slider.getMinimum()) / juce::jmax (1.0, slider.getInterval()));
+
+        g.setColour (theme::faintText.withMultipliedAlpha (alpha));
+
+        for (int i = 0; i <= steps; ++i)
+        {
+            const float a = startAngle + (float) i / (float) juce::jmax (1, steps) * (endAngle - startAngle);
+            g.drawLine (juce::Line<float> (pointAt (a, radius + 2.5f), pointAt (a, radius + 5.0f)), 1.0f);
+        }
+    }
+
+    const juce::PathStrokeType track (2.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+
+    juce::Path rail;
+    rail.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, startAngle, endAngle, true);
+    g.setColour (theme::hairline.withMultipliedAlpha (alpha));
+    g.strokePath (rail, track);
+
+    //  the value: from the start, or from the middle on a knob that goes both ways
+    const float from = slider.getProperties().contains (bipolarProperty) ? (startAngle + endAngle) * 0.5f : startAngle;
+
+    if (std::abs (angle - from) > 0.01f)
+    {
+        juce::Path fill;
+        fill.addCentredArc (centre.x, centre.y, radius, radius, 0.0f, juce::jmin (from, angle), juce::jmax (from, angle), true);
+        g.setColour (theme::ink.withMultipliedAlpha (alpha));
+        g.strokePath (fill, track);
+    }
+
+    const float faceRadius = radius * 0.66f;
+    g.setColour (theme::well.withMultipliedAlpha (alpha));
+    g.fillEllipse (juce::Rectangle<float> (faceRadius * 2.0f, faceRadius * 2.0f).withCentre (centre));
+    g.setColour ((slider.isMouseOverOrDragging() && enabled ? theme::faintText : theme::hairline).withMultipliedAlpha (alpha));
+    g.drawEllipse (juce::Rectangle<float> (faceRadius * 2.0f, faceRadius * 2.0f).withCentre (centre), 1.0f);
+
+    g.setColour (theme::ink.withMultipliedAlpha (alpha));
+    g.drawLine (juce::Line<float> (pointAt (angle, faceRadius * 0.25f), pointAt (angle, faceRadius * 0.85f)), 2.0f);
 }
 
 int GoLookAndFeel::getSliderThumbRadius (juce::Slider&)
@@ -417,7 +434,7 @@ juce::Slider::SliderLayout GoLookAndFeel::getSliderLayout (juce::Slider& slider)
 
     //  the value on the caption's line, right aligned; the track on the line under it
     auto bounds = slider.getLocalBounds();
-    auto valueLine = bounds.removeFromTop (captionHeight);
+    auto valueLine = bounds.removeFromTop (16);
 
     juce::Slider::SliderLayout layout;
     layout.textBoxBounds = valueLine.removeFromRight (juce::jmin (slider.getTextBoxWidth(), valueLine.getWidth()));
@@ -429,17 +446,428 @@ juce::Slider::SliderLayout GoLookAndFeel::getSliderLayout (juce::Slider& slider)
 juce::Label* GoLookAndFeel::createSliderTextBox (juce::Slider& slider)
 {
     auto* label = LookAndFeel_V4::createSliderTextBox (slider);
+    const bool centred = slider.isRotary() || slider.isBar();
 
-    label->setFont (valueFont());
-    label->setJustificationType (juce::Justification::centredRight);
+    label->setFont (slider.isBar() ? theme::font (14.0f) : valueFont());
+    label->setJustificationType (centred ? juce::Justification::centred : juce::Justification::centredRight);
     label->setBorderSize ({ 0, 0, 0, 0 });
+    label->setMinimumHorizontalScale (0.8f);
 
     return label;
 }
 
 //==============================================================================
+double Knob::getValueFromText (const juce::String& text)
+{
+    if (parse == nullptr)
+        return Slider::getValueFromText (text);
+
+    const auto typed = text.trim();
+    const auto value = parse (typed);
+
+    if (! value)
+    {
+        //  keep what it had: the default would read "abc" as the minimum
+        if (onNote != nullptr)
+            onNote ("\"" + typed + "\" is not a value");
+
+        return getValue();
+    }
+
+    const double clamped = juce::jlimit (getMinimum(), getMaximum(), *value);
+
+    if (! juce::approximatelyEqual (clamped, *value) && onNote != nullptr)
+        onNote (typed + " is out of range - set to " + getTextFromValue (clamped));
+
+    return clamped;
+}
+
+//==============================================================================
+void SegmentedChoice::setItems (std::vector<Item> newItems)
+{
+    items = std::move (newItems);
+    repaint();
+}
+
+void SegmentedChoice::setSelectedValue (int value)
+{
+    if (value != selected)
+    {
+        selected = value;
+        repaint();
+    }
+}
+
+int SegmentedChoice::itemAt (juce::Point<int> p) const
+{
+    if (items.empty() || ! getLocalBounds().contains (p))
+        return -1;
+
+    return juce::jlimit (0, (int) items.size() - 1, p.x * (int) items.size() / juce::jmax (1, getWidth()));
+}
+
+void SegmentedChoice::mouseDown (const juce::MouseEvent& e)
+{
+    const int i = itemAt (e.getPosition());
+
+    if (i < 0 || ! isEnabled())
+        return;
+
+    setSelectedValue (items[(size_t) i].value);
+
+    if (onSelect != nullptr)
+        onSelect (items[(size_t) i].value);
+}
+
+void SegmentedChoice::mouseMove (const juce::MouseEvent& e)
+{
+    const int i = itemAt (e.getPosition());
+
+    if (i != hover)
+    {
+        hover = i;
+        repaint();
+    }
+}
+
+void SegmentedChoice::mouseExit (const juce::MouseEvent&)
+{
+    hover = -1;
+    repaint();
+}
+
+void SegmentedChoice::paint (juce::Graphics& g)
+{
+    if (items.empty())
+        return;
+
+    const auto bounds = getLocalBounds().toFloat().reduced (0.5f);
+    const int count = (int) items.size();
+    const float w = bounds.getWidth() / (float) count;
+    const float alpha = isEnabled() ? 1.0f : 0.4f;
+
+    juce::Path outline;
+    outline.addRoundedRectangle (bounds, 4.0f);
+
+    const auto segment = [&] (int i)
+    {
+        return juce::Rectangle<float> (bounds.getX() + (float) i * w, bounds.getY(), w, bounds.getHeight());
+    };
+
+    {
+        //  the chosen segment is filled in ink; the accent stays for things that are on
+        juce::Graphics::ScopedSaveState state (g);
+        g.reduceClipRegion (outline);
+
+        for (int i = 0; i < count; ++i)
+        {
+            if (items[(size_t) i].value == selected)
+            {
+                g.setColour (theme::ink.withMultipliedAlpha (alpha));
+                g.fillRect (segment (i));
+            }
+            else if (i == hover && isEnabled())
+            {
+                g.setColour (theme::boardFill);
+                g.fillRect (segment (i));
+            }
+        }
+    }
+
+    g.setColour (theme::hairline);
+    g.strokePath (outline, juce::PathStrokeType (1.0f));
+
+    for (int i = 1; i < count; ++i)
+        g.fillRect (juce::Rectangle<float> (segment (i).getX() - 0.5f, bounds.getY(), 1.0f, bounds.getHeight()));
+
+    for (int i = 0; i < count; ++i)
+    {
+        const bool on = items[(size_t) i].value == selected;
+        auto colour = on ? theme::background : (i == hover ? theme::ink : theme::dimText);
+        g.setColour (colour.withMultipliedAlpha (on ? 1.0f : alpha));
+
+        auto area = segment (i).reduced (2.0f, 3.0f);
+
+        if (drawIcon != nullptr)
+        {
+            auto label = area.removeFromBottom (13.0f);
+            drawIcon (g, area, items[(size_t) i].value);
+            g.setFont (captionFont().withHeight (10.0f));
+            g.drawText (items[(size_t) i].text, label, juce::Justification::centred, false);
+        }
+        else
+        {
+            g.setFont (valueFont().withHeight (12.0f));
+            g.drawFittedText (items[(size_t) i].text, area.toNearestInt(), juce::Justification::centred, 1, 0.8f);
+        }
+    }
+}
+
+//==============================================================================
+ActivityLamps::ActivityLamps (GoSequencerProcessor& p)
+    : processor (p)
+{
+    setInterceptsMouseClicks (false, false);
+
+    channels[0] = p.apvts.getRawParameterValue ("blackChannel");
+    channels[1] = p.apvts.getRawParameterValue ("whiteChannel");
+
+    for (int h = 0; h < GoSequencerProcessor::maxHeadChannels; ++h)
+        channels[(size_t) (2 + h)] = p.apvts.getRawParameterValue ("headChannel" + juce::String (h + 1));
+
+    lastPosition.fill (-1);
+    shownChannel.fill (0);
+    startTimerHz (30);
+}
+
+bool ActivityLamps::inUse (int voice) const noexcept
+{
+    const int heads = processor.headCount();
+
+    //  spiral routes by colour, the multi head modes by playhead
+    return heads > 1 ? (voice >= 2 && voice - 2 < heads) : voice < 2;
+}
+
+int ActivityLamps::channelOf (int voice) const noexcept
+{
+    auto* channel = channels[(size_t) voice];
+    return channel != nullptr ? juce::roundToInt (channel->load (std::memory_order_relaxed)) : 0;
+}
+
+void ActivityLamps::timerCallback()
+{
+    bool dirty = false;
+    const int heads = processor.headCount();
+
+    if (heads != shownHeads)
+    {
+        shownHeads = heads;
+        lastPosition.fill (-1);
+        dirty = true;
+    }
+
+    const auto playsAt = [this] (int cell)
+    {
+        return processor.stoneAt (cell) != go::Stone::none && ! processor.stoneIsSpent (cell);
+    };
+
+    if (processor.isRunning())
+    {
+        if (heads > 1)
+        {
+            for (int h = 0; h < heads; ++h)
+            {
+                const int pos = processor.headPosition (h);
+
+                if (pos != lastPosition[(size_t) (2 + h)])
+                {
+                    lastPosition[(size_t) (2 + h)] = pos;
+
+                    if (playsAt (processor.headCellAt (h, pos)))
+                        level[(size_t) (2 + h)] = 1.0f;
+                }
+            }
+        }
+        else
+        {
+            const int step = processor.currentStep();
+
+            if (step != lastPosition[0])
+            {
+                lastPosition[0] = step;
+                const int cell = processor.spiralAt (step);
+
+                if (playsAt (cell))
+                    level[processor.stoneAt (cell) == go::Stone::black ? 0 : 1] = 1.0f;
+            }
+        }
+    }
+
+    for (int v = 0; v < voices; ++v)
+    {
+        auto& l = level[(size_t) v];
+
+        if (l > 0.02f)       { l *= 0.6f; dirty = true; }
+        else if (l > 0.0f)   { l = 0.0f;  dirty = true; }
+
+        const int channel = channelOf (v);
+
+        if (channel != shownChannel[(size_t) v])
+        {
+            shownChannel[(size_t) v] = channel;
+            dirty = true;
+        }
+    }
+
+    if (dirty)
+        repaint();
+}
+
+void ActivityLamps::paint (juce::Graphics& g)
+{
+    const float columnWidth = (float) getWidth() / (float) voices;
+
+    for (int v = 0; v < voices; ++v)
+    {
+        const float alpha = inUse (v) ? 1.0f : 0.32f;
+        auto column = juce::Rectangle<float> ((float) v * columnWidth, 0.0f, columnWidth, (float) getHeight());
+
+        const juce::String who = v == 0 ? juce::String ("B") : v == 1 ? juce::String ("W") : juce::String (v - 1);
+
+        g.setFont (captionFont());
+        g.setColour (theme::dimText.withMultipliedAlpha (alpha));
+        g.drawText (who, column.removeFromTop (14.0f), juce::Justification::centred, false);
+
+        const auto lamp = juce::Rectangle<float> (10.0f, 10.0f).withCentre (column.removeFromTop (18.0f).getCentre());
+        const float lit = level[(size_t) v];
+
+        if (lit > 0.0f)
+        {
+            g.setColour (theme::accent.withAlpha (0.3f * lit));
+            g.fillEllipse (lamp.expanded (4.0f));
+            g.setColour (theme::accent.withAlpha (lit));
+            g.fillEllipse (lamp);
+        }
+
+        g.setColour (theme::faintText.withMultipliedAlpha (alpha));
+        g.drawEllipse (lamp.reduced (0.65f), 1.3f);
+
+        g.setFont (valueFont());
+        g.setColour (theme::ink.withMultipliedAlpha (alpha));
+        g.drawText (juce::String (shownChannel[(size_t) v]), column.removeFromTop (16.0f), juce::Justification::centred, false);
+    }
+}
+
+//==============================================================================
+void LaunchpadDiagram::paint (juce::Graphics& g)
+{
+    //  The top row left to right, then the right hand column top to bottom -
+    //  the order LaunchpadSurface::handleButton gives them their jobs in.
+    static const char* const topJobs[8]  = { "rate +", "rate -", "step back", "step on",
+                                             "run game", "free run", "place", "hold: clear" };
+    static const char* const sideJobs[8] = { "play vs AI", "pass", "lift last", "loop",
+                                             "wave replay", "move rate +", "move rate -", "redraw" };
+
+    //  The jobs are what this drawing is for, so they are written large across
+    //  the pads, where there is room: the top row's down the left half in order,
+    //  each beside the mark its button carries, and each side button's in its
+    //  own row, pointing at it. The pads themselves are only a faint grid.
+    const float footerHeight = 46.0f, padding = 6.0f;
+    const auto area = getLocalBounds().toFloat();
+
+    const float pitch = std::floor (juce::jmin ((area.getWidth() - 2.0f * padding) / 9.0f,
+                                                (area.getHeight() - 2.0f * padding - footerHeight - 8.0f) / 9.0f,
+                                                44.0f));
+
+    if (pitch < 16.0f)
+        return;             //  too little room to draw anything worth reading
+
+    const auto body = juce::Rectangle<float> (9.0f * pitch + 2.0f * padding, 9.0f * pitch + 2.0f * padding)
+                        .withCentre ({ area.getCentreX(), area.getY() + padding + 4.5f * pitch });
+    const float gx = body.getX() + padding, gy = body.getY() + padding;
+
+    const auto cell = [&] (int col, int row)
+    {
+        return juce::Rectangle<float> (gx + (float) col * pitch, gy + (float) row * pitch, pitch, pitch);
+    };
+
+    //  up, down, left, right - the four arrows printed on the device - drawn
+    //  rather than set in type, so no font has to have them
+    const auto arrow = [&] (juce::Point<float> centre, float size, int direction)
+    {
+        static constexpr float turns[5] = { 0.0f, 1.0f, -0.5f, 0.5f, 0.5f };      //  up, down, left, right, (pointer)
+        juce::Path p;
+        p.addTriangle (0.0f, -size, size, size * 0.7f, -size, size * 0.7f);
+        p.applyTransform (juce::AffineTransform::rotation (turns[direction] * juce::MathConstants<float>::pi)
+                            .translated (centre.x, centre.y));
+        g.fillPath (p);
+    };
+
+    const auto mark = [&] (juce::Rectangle<float> face, int topIndex, int sideIndex, float textHeight)
+    {
+        g.setColour (theme::accent.withAlpha (0.14f));
+        g.fillRoundedRectangle (face, 3.0f);
+        g.setColour (theme::accent);
+        g.drawRoundedRectangle (face, 3.0f, 1.2f);
+
+        if (topIndex >= 0 && topIndex < 4)
+        {
+            arrow (face.getCentre(), face.getHeight() * 0.2f, topIndex);
+            return;
+        }
+
+        g.setFont (theme::font (textHeight, juce::Font::bold));
+        g.drawText (juce::String (topIndex >= 0 ? topIndex + 1 : sideIndex + 1), face, juce::Justification::centred, false);
+    };
+
+    g.setColour (theme::hairline);
+    g.drawRoundedRectangle (body.reduced (0.5f), 9.0f, 1.0f);
+
+    //  the function buttons, the part to read
+    for (int i = 0; i < 8; ++i)
+    {
+        mark (cell (i, 0).reduced (pitch * 0.12f), i, -1, pitch * 0.38f);
+        mark (cell (8, i + 1).reduced (pitch * 0.12f), -1, i, pitch * 0.38f);
+    }
+
+    //  the logo, top right, which does nothing here
+    g.setColour (theme::faintText);
+    g.fillEllipse (juce::Rectangle<float> (pitch * 0.34f, pitch * 0.34f).withCentre (cell (8, 0).getCentre()));
+
+    //  the pads, faintly
+    for (int row = 1; row <= 8; ++row)
+        for (int col = 0; col < 8; ++col)
+        {
+            g.setColour (theme::ink.withAlpha (theme::isDark ? 0.06f : 0.05f));
+            g.fillRoundedRectangle (cell (col, row).reduced (pitch * 0.15f), 3.0f);
+        }
+
+    //  the halves: the top row's jobs on the left, the side buttons' on the right
+    {
+        const float x = gx + 4.0f * pitch;
+        g.setColour (theme::hairline);
+
+        for (float y = gy + pitch + 3.0f; y < gy + 9.0f * pitch - 3.0f; y += 6.0f)
+            g.fillRect (juce::Rectangle<float> (x - 0.5f, y, 1.0f, 3.0f));
+    }
+
+    const auto textFont = theme::font (juce::jmax (11.5f, pitch * 0.45f));
+    const float chip = juce::jmin (16.0f, pitch * 0.62f);
+
+    for (int r = 0; r < 8; ++r)
+    {
+        const auto line = juce::Rectangle<float> (gx, gy + (float) (r + 1) * pitch, 8.0f * pitch, pitch);
+        auto left  = line.withWidth (4.0f * pitch).reduced (3.0f, 0.0f);
+        auto right = line.withTrimmedLeft (4.0f * pitch).reduced (3.0f, 0.0f);
+
+        //  the same mark as the button it names
+        mark (left.removeFromLeft (chip).withSizeKeepingCentre (chip, chip), r, -1, chip * 0.58f);
+        left.removeFromLeft (5.0f);
+
+        g.setFont (textFont);
+        g.setColour (theme::ink);
+        g.drawFittedText (topJobs[r], left.toNearestInt(), juce::Justification::centredLeft, 1, 0.8f);
+
+        //  and a pointer at the button in this row
+        g.setColour (theme::accent);
+        arrow ({ right.getRight() - 4.0f, right.getCentreY() }, 3.5f, 4);
+        right.removeFromRight (12.0f);
+
+        g.setColour (theme::ink);
+        g.drawFittedText (sideJobs[r], right.toNearestInt(), juce::Justification::centredRight, 1, 0.8f);
+    }
+
+    g.setFont (theme::font (11.5f));
+    g.setColour (theme::dimText);
+    g.drawFittedText ("left half: the top row, left to right. right half: each side button, in its own row. "
+                      "the pads are the 8 x 8 board - press to place, press a stone to lift it",
+                      juce::Rectangle<float> (area.getX(), body.getBottom() + 8.0f, area.getWidth(), footerHeight).toNearestInt(),
+                      juce::Justification::topLeft, 3, 1.0f);
+}
+
+//==============================================================================
 GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
-    : AudioProcessorEditor (&p), processor (p), board (p)
+    : AudioProcessorEditor (&p), processor (p), board (p), activity (p)
 {
     setLookAndFeel (&lookAndFeel);
 
@@ -449,55 +877,37 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
 
     lastSgfDirectory = juce::File::getSpecialLocation (juce::File::userDocumentsDirectory);
 
+    plate.painter = [this] (juce::Graphics& g) { paintPlate (g); };
+    addAndMakeVisible (plate);
+
+    //  ---- the top bar: on both faces ---------------------------------------
+    faceSwitch.setItems ({ { "PLAY", playFace }, { "PATCH", patchFace } });
+    faceSwitch.setTitle ("panel face");
+    faceSwitch.onSelect = [this] (int face) { showFace (face); };
+    addToFace (pinned, faceSwitch);
+
     darkModeButton.setButtonText ("Dark");
+    darkModeButton.getProperties().set (ledProperty, true);
     darkModeButton.setClickingTogglesState (true);
     darkModeButton.setToggleState (theme::isDark, juce::dontSendNotification);
     darkModeButton.setTitle ("switch between light and dark");
     darkModeButton.onClick = [this] { setDarkMode (darkModeButton.getToggleState()); };
-    addAndMakeVisible (darkModeButton);
+    addToFace (pinned, darkModeButton);
 
-    addAndMakeVisible (board);
+    //  ---- the board and what a click on it does: on both faces -------------
+    addToFace (pinned, board);
     board.onMessage = [this] (const juce::String& text) { showMessage (text); };
 
-    //  ---- the tabs ---------------------------------------------------------
-    //  One tab of controls at a time, laid out in the same rectangle, so
-    //  switching never resizes the window under the host.
-    const char* const tabNames[tabCount] = { "Sequencer", "Board", "Channels", "Game", "AI", "Pads" };
+    //  in size order on screen; the values are the parameter's append-only slots
+    setUpSegments (pinned, sizeSwitch, { { "8", 3 }, { "9", 0 }, { "13", 1 }, { "19", 2 } }, "boardSize", sizeAttachment);
+    setUpCaption (pinned, sizeCaption, "board");
+    setUpSegments (pinned, placeSwitch,
+                   { { "Alt", 0 }, { juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f")), 1 },
+                     { juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8b")), 2 } },
+                   "colourMode", placeAttachment);
+    setUpCaption (pinned, placeCaption, "place");
 
-    for (int t = 0; t < tabCount; ++t)
-    {
-        auto& tab = tabButtons[(size_t) t];
-        tab.setButtonText (tabNames[t]);
-        tab.getProperties().set (tabProperty, true);
-        tab.setClickingTogglesState (true);
-        tab.setRadioGroupId (1);
-        tab.onClick = [this, t] { showTab (t); };
-        addAndMakeVisible (tab);
-    }
-
-    //  ---- beside the board, whichever tab is open --------------------------
-    //  what a click on the board does depends on these two, so they stay by it
-    setUpCombo (pinned, sizeBox, sizeCaption, "board", GoSequencerProcessor::boardSizeNames(), "boardSize", sizeAttachment);
-    setUpCombo (pinned, colourBox, colourCaption, "place", { "Alternate", "Black", "White" }, "colourMode", colourAttachment);
-
-    //  ---- sequencer --------------------------------------------------------
-    setUpCombo  (sequencerTab, modeBox, modeCaption, "mode", GoSequencerProcessor::playModeNames(), "playMode", modeAttachment);
-    setUpCombo  (sequencerTab, rateBox, rateCaption, "step rate", GoSequencerProcessor::rateNames(), "rate", rateAttachment);
-    setUpSlider (sequencerTab, noteSlider, noteCaption, "note", "note", noteAttachment);
-    setUpSlider (sequencerTab, gateSlider, gateCaption, "gate", "gate", gateAttachment);
-    setUpSlider (sequencerTab, lifeSlider, lifeCaption, "stone life", "stoneLife", lifeAttachment);
-    setUpCombo  (sequencerTab, lifeModeBox, lifeModeCaption, "life counts",
-                 GoSequencerProcessor::lifeModeNames(), "lifeMode", lifeModeAttachment);
-    setUpToggle (sequencerTab, freeRunButton, "Free run", "freeRun", freeRunAttachment);
-    setUpSlider (sequencerTab, tempoSlider, tempoCaption, "free tempo", "tempo", tempoAttachment);
-    setUpSlider (sequencerTab, spreadSlider, spreadCaption, "spread", "ringSpread", spreadAttachment);
-    setUpToggle (sequencerTab, tieNotesButton, "Tie notes", "tieNotes", tieNotesAttachment);
-
-    //  ---- board ------------------------------------------------------------
-    setUpToggle (boardTab, koButton, "Ko rule", "koRule", koAttachment);
-    setUpToggle (boardTab, selfCaptureButton, "Self capture", "selfCapture", selfCaptureAttachment);
-
-    setUpButton (boardTab, clearButton, "Clear board", [this]
+    setUpButton (pinned, clearButton, "Clear board", [this]
     {
         processor.clearBoard();
         showMessage ("board cleared");
@@ -506,74 +916,99 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
 
     //  the separators are UTF-8: JUCE must be told, or they arrive as Latin-1
     hintLabel.setText (juce::String (juce::CharPointer_UTF8 (
-                           "click to place  \xc2\xb7  click a stone to lift it  \xc2\xb7  drop an .sgf anywhere")),
+                           "click to place  \xc2\xb7  click a stone to lift it  \xc2\xb7  drop an .sgf anywhere  \xc2\xb7  "
+                           "click any value to type it")),
                        juce::dontSendNotification);
-    setUpText (boardTab, hintLabel, juce::Justification::topLeft);
+    setUpText (pinned, hintLabel, juce::Justification::centred);
+    hintLabel.setFont (valueFont().withHeight (11.5f));
+    hintLabel.setColour (juce::Label::textColourId, theme::faintText);
 
-    //  ---- channels ---------------------------------------------------------
-    //  velocity follows the colour in every mode; the channel sliders the mode
-    //  is not routing by are greyed out by timerCallback()
-    setUpSlider (channelsTab, blackVelocitySlider, blackVelocityCaption, "black velocity", "blackVelocity", blackVelocityAttachment);
-    setUpSlider (channelsTab, whiteVelocitySlider, whiteVelocityCaption, "white velocity", "whiteVelocity", whiteVelocityAttachment);
-    setUpSlider (channelsTab, blackChannelSlider, blackChannelCaption, "black channel", "blackChannel",
-                 blackChannelAttachment, narrowValueWidth);
-    setUpSlider (channelsTab, whiteChannelSlider, whiteChannelCaption, "white channel", "whiteChannel",
-                 whiteChannelAttachment, narrowValueWidth);
+    //  ==== PLAY ==============================================================
+    //  ---- clock
+    setUpSegments (playFace, modeSwitch,
+                   { { "spiral", 0 }, { "poly", 1 }, { "quads out", 2 }, { "quads in", 3 } },
+                   "playMode", modeAttachment);
+    modeSwitch.drawIcon = [] (juce::Graphics& g, juce::Rectangle<float> area, int mode) { drawModeIcon (g, area, mode); };
 
-    for (int h = 0; h < headChannels; ++h)
-        setUpSlider (channelsTab, headChannelSliders[(size_t) h], headChannelCaptions[(size_t) h],
-                     "head " + juce::String (h + 1),
-                     "headChannel" + juce::String (h + 1),
-                     headChannelAttachments[(size_t) h], narrowValueWidth);
+    setUpKnob (playFace, rateKnob, rateCaption, "step rate", "rate", rateAttachment,
+               choiceParser (GoSequencerProcessor::rateNames()));
+    rateKnob.getProperties().set (detentProperty, true);
+    setUpKnob (playFace, tempoKnob, tempoCaption, "free tempo", "tempo", tempoAttachment,
+               parser ([] (const std::string& t) { return valuetext::number (t, { "bpm" }); }));
+    setUpLed (playFace, freeRunButton, "Free run", "freeRun", freeRunAttachment);
+    setUpLed (playFace, tieNotesButton, "Tie notes", "tieNotes", tieNotesAttachment);
 
-    //  the port: the channels above, kept intact for a host that would merge
-    //  them on its own track to track routing - see MidiPortOut
-    portBox.setTitle ("midi out port");
-    portBox.onOpen = [this] { refreshPortList(); };
-    portBox.onChange = [this]
-    {
-        const int index = portBox.getSelectedId() - 2;
+    //  ---- voice
+    setUpKnob (playFace, noteKnob, noteCaption, "note", "note", noteAttachment,
+               parser ([] (const std::string& t) { return valuetext::note (t); }));
+    setUpKnob (playFace, gateKnob, gateCaption, "gate", "gate", gateAttachment,
+               parser ([] (const std::string& t) { return valuetext::percent (t); }));
+    setUpKnob (playFace, lifeKnob, lifeCaption, "stone life", "stoneLife", lifeAttachment,
+               parser ([] (const std::string& t) { return valuetext::life (t, GoSequencerProcessor::maxStoneLife); }));
+    setUpKnob (playFace, spreadKnob, spreadCaption, "spread", "ringSpread", spreadAttachment,
+               wholeParser ({ "semitones", "semitone", "st" }));
+    spreadKnob.getProperties().set (bipolarProperty, true);
+    setUpKnob (playFace, blackVelocityKnob, blackVelocityCaption,
+               juce::String (juce::CharPointer_UTF8 ("vel \xe2\x97\x8f")), "blackVelocity", blackVelocityAttachment, wholeParser());
+    setUpKnob (playFace, whiteVelocityKnob, whiteVelocityCaption,
+               juce::String (juce::CharPointer_UTF8 ("vel \xe2\x97\x8b")), "whiteVelocity", whiteVelocityAttachment, wholeParser());
+    blackVelocityKnob.setTitle ("black velocity");
+    whiteVelocityKnob.setTitle ("white velocity");
 
-        processor.setMidiOutPort (juce::isPositiveAndBelow (index, portItems.size()) ? portItems[index]
-                                                                                     : juce::String());
-        refreshPortStatus();
-    };
-    addToTab (channelsTab, portBox);
-    setUpCaption (channelsTab, portCaption, "midi out port");
-    setUpText (channelsTab, portStatusLabel, juce::Justification::topLeft);
-    refreshPortList();
+    setUpSegments (playFace, lifeModeSwitch, { { "Steps", 0 }, { "Placements", 1 } }, "lifeMode", lifeModeAttachment);
+    setUpCaption (playFace, lifeModeCaption, "life counts");
 
-    //  ---- game record ------------------------------------------------------
-    setUpText (gameTab, gameTitleLabel, juce::Justification::centredLeft);
-    setUpText (gameTab, gameDetailLabel, juce::Justification::centredRight);
+    //  ---- activity
+    addToFace (playFace, activity);
+    setUpText (playFace, activityLabel, juce::Justification::topLeft);
+    setUpText (playFace, lapLabel, juce::Justification::topLeft);
 
-    setUpButton (gameTab, loadButton, juce::String (juce::CharPointer_UTF8 ("Load SGF\xe2\x80\xa6")),
+    //  ---- game record
+    setUpText (playFace, gameTitleLabel, juce::Justification::centredLeft);
+    setUpText (playFace, gameDetailLabel, juce::Justification::centredLeft);
+    gameTitleLabel.setFont (valueFont().boldened());
+
+    setUpButton (playFace, loadButton, juce::String (juce::CharPointer_UTF8 ("Load SGF\xe2\x80\xa6")),
                  [this] { openSgfChooser(); });
 
-    setUpButton (gameTab, unloadButton, "Unload", [this]
+    setUpButton (playFace, unloadButton, "Unload", [this]
     {
         processor.clearGame();          //  a run ends here too: it turns its own switch off
         refreshGameDisplay();
         showMessage ("game record unloaded");
     });
 
-    setUpCombo  (gameTab, gameRateBox, gameRateCaption, "move rate", GoSequencerProcessor::gameRateNames(),
-                 "gameRate", gameRateAttachment);
-    setUpSlider (gameTab, waveGapSlider, waveGapCaption, "wave gap", "waveGap", waveGapAttachment);
-    waveGapSlider.setEnabled (processor.waveReplayOn());          //  synced again every tick; this is just the initial state
+    setUpKnob (playFace, gameRateKnob, gameRateCaption, "move rate", "gameRate", gameRateAttachment,
+               choiceParser (GoSequencerProcessor::gameRateNames()));
+    gameRateKnob.getProperties().set (detentProperty, true);
+    setUpKnob (playFace, waveGapKnob, waveGapCaption, "wave gap", "waveGap", waveGapAttachment, wholeParser());
+    waveGapKnob.setEnabled (processor.waveReplayOn());          //  synced again every tick; this is just the initial state
 
-    setUpToggle (gameTab, runGameButton, "Run game", "gameRun", runGameAttachment);
-    setUpToggle (gameTab, loopGameButton, "Loop", "gameLoop", loopGameAttachment);
-    setUpToggle (gameTab, waveReplayButton, "Wave replay", "waveReplay", waveReplayAttachment);
+    setUpLed (playFace, runGameButton, "Run game", "gameRun", runGameAttachment);
+    setUpLed (playFace, loopGameButton, "Loop", "gameLoop", loopGameAttachment);
+    setUpLed (playFace, waveReplayButton, "Wave replay", "waveReplay", waveReplayAttachment);
 
     moveSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    moveSlider.setTextBoxStyle (juce::Slider::TextBoxAbove, false, 110, captionHeight);
+    moveSlider.setTextBoxStyle (juce::Slider::TextBoxAbove, false, 110, valueHeight);
     moveSlider.setRepaintsOnMouseActivity (true);
     moveSlider.setTitle ("position in the record");
     moveSlider.setRange (0.0, 1.0, 1.0);
     moveSlider.textFromValueFunction = [this] (double value)
     {
         return "move " + juce::String ((int) value) + " / " + juce::String (processor.gameMoveCount());
+    };
+    moveSlider.valueFromTextFunction = [this] (const juce::String& text)
+    {
+        //  "34", or the box's own "move 34 / 112": the first number is the move
+        const auto digits = text.upToFirstOccurrenceOf ("/", false, false).retainCharacters ("0123456789");
+
+        if (digits.isEmpty())
+        {
+            showMessage ("position: \"" + text.trim() + "\" is not a move number");
+            return moveSlider.getValue();
+        }
+
+        return (double) digits.getIntValue();
     };
     moveSlider.onValueChange = [this]
     {
@@ -582,41 +1017,42 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
         if (wanted != processor.gamePosition())
             processor.setGamePosition (wanted);
     };
-    addToTab (gameTab, moveSlider);
-    setUpCaption (gameTab, moveCaption, "position");
+    addToFace (playFace, moveSlider);
+    setUpCaption (playFace, moveCaption, "position");
 
-    setUpButton (gameTab, previousMoveButton, juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xb9")),
+    setUpButton (playFace, previousMoveButton, juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xb9")),
                  [this] { processor.nudgeGamePosition (-1); refreshGameDisplay(); });
     previousMoveButton.setTitle ("previous move");
 
-    setUpButton (gameTab, nextMoveButton, juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xba")),
+    setUpButton (playFace, nextMoveButton, juce::String (juce::CharPointer_UTF8 ("\xe2\x80\xba")),
                  [this] { processor.nudgeGamePosition (1); refreshGameDisplay(); });
     nextMoveButton.setTitle ("next move");
 
-    //  ---- self-play --------------------------------------------------------
-    //  The record is written rather than loaded, so Move Rate, Run and Loop on
-    //  the game tab drive a generated game exactly as they drive a loaded one.
-    setUpToggle (aiTab, aiPlayButton, "AI self-play", "aiPlay", aiPlayAttachment);
+    //  ---- players: self-play
+    //  The record is written rather than loaded, so Move Rate, Run and Loop
+    //  drive a generated game exactly as they drive a loaded one.
+    setUpLed (playFace, aiPlayButton, "AI self-play", "aiPlay", aiPlayAttachment);
 
     //  which pair writes the games: the classic players, or the ones that read
     //  ladders, eye shapes and areas before they choose
-    setUpCombo  (aiTab, aiPlayersBox, aiPlayersCaption, "players", GoSequencerProcessor::aiPlayersNames(),
-                 "aiPlayers", aiPlayersAttachment);
-    setUpSlider (aiTab, aiMovesSlider, aiMovesCaption, "game length", "aiMoves", aiMovesAttachment);
-    setUpSlider (aiTab, aiVariationSlider, aiVariationCaption, "variation", "aiVariation", aiVariationAttachment);
-    setUpSlider (aiTab, aiSeedSlider, aiSeedCaption, "seed", "aiSeed", aiSeedAttachment);
+    setUpSegments (playFace, playersSwitch, { { "Classic", 0 }, { "Reading", 1 } }, "aiPlayers", playersAttachment);
+    setUpKnob (playFace, aiMovesKnob, aiMovesCaption, "length", "aiMoves", aiMovesAttachment,
+               wholeParser ({ "moves", "move", "mv" }));
+    setUpKnob (playFace, aiVariationKnob, aiVariationCaption, "variation", "aiVariation", aiVariationAttachment,
+               wholeParser ({ "%" }));
+    setUpKnob (playFace, aiSeedKnob, aiSeedCaption, "seed", "aiSeed", aiSeedAttachment, wholeParser());
 
-    for (auto* slider : { &aiMovesSlider, &aiVariationSlider, &aiSeedSlider })
-        slider->setEnabled (processor.aiSelfPlay());               //  as above: the tick keeps these in step
+    for (auto* knob : { &aiMovesKnob, &aiVariationKnob, &aiSeedKnob })
+        knob->setEnabled (processor.aiSelfPlay());                 //  as above: the tick keeps these in step
 
-    aiPlayersBox.setEnabled (processor.aiSelfPlay());
+    playersSwitch.setEnabled (processor.aiSelfPlay());
 
     //  The opening. A position is not an opening - the order decides what is
     //  captured - so this takes the ten stones the board was clicked in, not
     //  the ten stones standing on it.
-    setUpCaption (aiTab, openingCaption, "opening");
+    setUpCaption (playFace, openingCaption, "opening");
 
-    setUpButton (aiTab, openingFromBoardButton, "From board", [this]
+    setUpButton (playFace, openingFromBoardButton, "From board", [this]
     {
         const auto error = processor.setOpeningFromBoard();
 
@@ -631,33 +1067,31 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
                                             : "opening set");
     });
 
-    setUpButton (aiTab, openingBookButton, "Use book", [this]
+    setUpButton (playFace, openingBookButton, "Use book", [this]
     {
         processor.useBookOpening();
         refreshOpeningDisplay();
         showMessage ("back to the book opening");
     });
 
-    setUpText (aiTab, openingLabel, juce::Justification::topLeft);
+    setUpText (playFace, openingLabel, juce::Justification::topLeft);
 
-    //  ---- playing against them ---------------------------------------------
+    //  ---- players: playing against them
     //  The same pair, answering a move at a time instead of writing a whole
     //  game. It owns the board while it is on, so the processor turns self-play
     //  and Run Game off rather than let two things write to the same stones.
-    setUpToggle (aiTab, aiOpponentButton, "Play against", "aiOpponent", aiOpponentAttachment);
+    setUpLed (playFace, aiOpponentButton, "Play against", "aiOpponent", aiOpponentAttachment);
+    setUpSegments (playFace, opponentSwitch, { { "White", 0 }, { "Black", 1 } }, "aiOpponentColour", opponentAttachment);
+    setUpCaption (playFace, opponentCaption, "they play");
 
-    setUpCombo  (aiTab, aiOpponentBox, aiOpponentCaption, "they play",
-                 GoSequencerProcessor::aiOpponentColourNames(), "aiOpponentColour",
-                 aiOpponentColourAttachment);
-
-    setUpButton (aiTab, passButton, "Pass", [this]
+    setUpButton (playFace, passButton, "Pass", [this]
     {
         processor.passMove();
         board.repaint();
         refreshMatchDisplay();
     });
 
-    setUpButton (aiTab, newMatchButton, "New game", [this]
+    setUpButton (playFace, newMatchButton, "New game", [this]
     {
         processor.newMatch();
         board.repaint();
@@ -665,9 +1099,49 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
         showMessage ("a new game, from an empty board");
     });
 
-    setUpText (aiTab, matchLabel, juce::Justification::topLeft);
+    setUpText (playFace, matchLabel, juce::Justification::topLeft);
 
-    //  ---- the Launchpad ----------------------------------------------------
+    //  ==== PATCH =============================================================
+    //  ---- routing: velocity follows the colour in every mode; the cells the
+    //  mode is not routing by are greyed out by refreshModeDisplay()
+    setUpCaption (patchFace, routingCaption, "midi channel per voice - drag, or click to type");
+    setUpCell (blackChannelCell, blackChannelCaption, juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f")),
+               "blackChannel", blackChannelAttachment);
+    setUpCell (whiteChannelCell, whiteChannelCaption, juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8b")),
+               "whiteChannel", whiteChannelAttachment);
+    blackChannelCell.setTitle ("black channel");
+    whiteChannelCell.setTitle ("white channel");
+
+    for (int h = 0; h < headChannels; ++h)
+        setUpCell (headChannelCells[(size_t) h], headChannelCaptions[(size_t) h], juce::String (h + 1),
+                   "headChannel" + juce::String (h + 1), headChannelAttachments[(size_t) h]);
+
+    setUpText (patchFace, routingLabel, juce::Justification::topLeft);
+
+    //  ---- the port: the channels above, kept intact for a host that would
+    //  merge them on its own track to track routing - see MidiPortOut
+    portBox.setTitle ("midi out port");
+    portBox.onOpen = [this] { refreshPortList(); };
+    portBox.onChange = [this]
+    {
+        const int index = portBox.getSelectedId() - 2;
+
+        processor.setMidiOutPort (juce::isPositiveAndBelow (index, portItems.size()) ? portItems[index]
+                                                                                     : juce::String());
+        refreshPortStatus();
+    };
+    addToFace (patchFace, portBox);
+    setUpText (patchFace, portStatusLabel, juce::Justification::topLeft);
+    refreshPortList();
+
+    //  ---- rules
+    setUpLed (patchFace, koButton, "Ko rule", "koRule", koAttachment);
+    setUpLed (patchFace, selfCaptureButton, "Self capture", "selfCapture", selfCaptureAttachment);
+    rulesLabel.setText ("set once per piece: they decide which moves are legal, not how anything sounds",
+                        juce::dontSendNotification);
+    setUpText (patchFace, rulesLabel, juce::Justification::topLeft);
+
+    //  ---- the Launchpad
     //  Its grid as the board. Choosing the ports is all there is to it: the
     //  plugin puts the Launchpad into Programmer mode itself and gives it back
     //  when it lets go, so nothing is set up in Novation Components.
@@ -680,8 +1154,8 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
         choosePadsPorts (juce::isPositiveAndBelow (index, padsInItems.size()) ? padsInItems[index] : juce::String(),
                          processor.launchpadOut());
     };
-    addToTab (padsTab, padsInBox);
-    setUpCaption (padsTab, padsInCaption, "launchpad in");
+    addToFace (patchFace, padsInBox);
+    setUpCaption (patchFace, padsInCaption, "pads in");
 
     padsOutBox.setTitle ("launchpad out");
     padsOutBox.onOpen = [this] { refreshPadsLists(); };
@@ -692,10 +1166,10 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
         choosePadsPorts (processor.launchpadIn(),
                          juce::isPositiveAndBelow (index, padsOutItems.size()) ? padsOutItems[index] : juce::String());
     };
-    addToTab (padsTab, padsOutBox);
-    setUpCaption (padsTab, padsOutCaption, "launchpad out");
+    addToFace (patchFace, padsOutBox);
+    setUpCaption (patchFace, padsOutCaption, "pads out");
 
-    setUpButton (padsTab, padsFindButton, "Find Launchpad", [this]
+    setUpButton (patchFace, padsFindButton, "Find Launchpad", [this]
     {
         const auto found = LaunchpadSurface::findLaunchpad();
 
@@ -709,28 +1183,29 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
         choosePadsPorts (found.in, found.out);
     });
 
-    setUpButton (padsTab, padsSizeButton, "Use 8 x 8", [this]
+    setUpButton (patchFace, padsSizeButton, "Use 8 x 8", [this]
     {
         useLaunchpadBoardSize();
         showMessage ("the board is 8 x 8 now, the size of the grid");
     });
 
-    setUpButton (padsTab, padsStopButton, "Stop", [this]
+    setUpButton (patchFace, padsStopButton, "Stop", [this]
     {
         processor.setLaunchpadPorts ({}, {});
         refreshPadsLists();
         showMessage ("the Launchpad is back to its own modes");
     });
 
-    setUpText (padsTab, padsStatusLabel, juce::Justification::topLeft);
+    setUpText (patchFace, padsStatusLabel, juce::Justification::topLeft);
 
     //  the device itself, with what each button round its edge does here
-    addToTab (padsTab, padsDiagram);
+    addToFace (patchFace, padsDiagram);
 
     refreshPadsLists();
     refreshMatchDisplay();
     refreshOpeningDisplay();
     refreshGameDisplay();
+    refreshModeDisplay();
 
     //  Sliders build their value boxes - colours, font, alignment - from the
     //  look-and-feel they have when it changes, and everything above was added
@@ -738,11 +1213,14 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     //  boxes keep the default dark scheme's white text.
     sendLookAndFeelChange();
 
-    showTab ((int) processor.apvts.state.getProperty (activeTabProperty, (int) sequencerTab));
+    showFace ((int) processor.apvts.state.getProperty (panelFaceProperty, (int) playFace));
 
+    //  the plate is drawn at one size and scaled, so the window keeps its shape
     setResizable (true, true);
-    setResizeLimits (780, 420, 1800, 1200);
-    setSize (1020, 620);
+    getConstrainer()->setFixedAspectRatio ((double) Faceplate::width / (double) Faceplate::height);
+    setResizeLimits (Faceplate::width * 4 / 5, Faceplate::height * 4 / 5,
+                     Faceplate::width * 3 / 2, Faceplate::height * 3 / 2);
+    setSize (Faceplate::width, Faceplate::height);
 
     startTimerHz (20);
 }
@@ -753,31 +1231,29 @@ GoSequencerEditor::~GoSequencerEditor()
 }
 
 //==============================================================================
-void GoSequencerEditor::addToTab (Tab tab, juce::Component& component)
+void GoSequencerEditor::addToFace (Face face, juce::Component& component)
 {
-    if (tab == pinned)
+    if (face == pinned)
     {
-        addAndMakeVisible (component);
+        plate.addAndMakeVisible (component);
         return;
     }
 
-    addChildComponent (component);
-    tabMembers[(size_t) tab].push_back (&component);
+    plate.addChildComponent (component);
+    faceMembers[(size_t) face].push_back (&component);
 }
 
-void GoSequencerEditor::showTab (int tab)
+void GoSequencerEditor::showFace (int face)
 {
-    currentTab = juce::jlimit (0, tabCount - 1, tab);
+    currentFace = juce::jlimit (0, faceCount - 1, face);
+    faceSwitch.setSelectedValue (currentFace);
 
-    for (int t = 0; t < tabCount; ++t)
-    {
-        tabButtons[(size_t) t].setToggleState (t == currentTab, juce::dontSendNotification);
+    for (int f = 0; f < faceCount; ++f)
+        for (auto* component : faceMembers[(size_t) f])
+            component->setVisible (f == currentFace);
 
-        for (auto* component : tabMembers[(size_t) t])
-            component->setVisible (t == currentTab);
-    }
-
-    processor.apvts.state.setProperty (activeTabProperty, currentTab, nullptr);
+    processor.apvts.state.setProperty (panelFaceProperty, currentFace, nullptr);
+    plate.repaint();
 }
 
 void GoSequencerEditor::setDarkMode (bool dark)
@@ -788,6 +1264,8 @@ void GoSequencerEditor::setDarkMode (bool dark)
     for (auto* label : dimLabels)
         label->setColour (juce::Label::textColourId, theme::dimText);
 
+    hintLabel.setColour (juce::Label::textColourId, theme::faintText);
+
     //  these colour themselves ink or dimText depending on state, not always
     //  dimText, so they need re-reading rather than the flat reset above
     refreshOpeningDisplay();
@@ -795,82 +1273,118 @@ void GoSequencerEditor::setDarkMode (bool dark)
     refreshPortStatus();
     refreshMatchDisplay();
     refreshPadsStatus();
+    refreshModeDisplay();
 
     processor.apvts.state.setProperty (darkModeProperty, dark, nullptr);
 
     sendLookAndFeelChange();
     board.refreshAll();         //  the grid is a cached image in the old colours
     repaint();
+    plate.repaint();
 }
 
-void GoSequencerEditor::setUpCaption (Tab tab, juce::Label& caption, const juce::String& text)
+void GoSequencerEditor::setUpCaption (Face face, juce::Label& caption, const juce::String& text)
 {
     caption.setText (text.toUpperCase(), juce::dontSendNotification);
     caption.setFont (captionFont());
     caption.setColour (juce::Label::textColourId, theme::dimText);
     caption.setBorderSize ({ 0, 0, 0, 0 });
     caption.setJustificationType (juce::Justification::centredLeft);
-    addToTab (tab, caption);
+    caption.setMinimumHorizontalScale (0.8f);
+    caption.setInterceptsMouseClicks (false, false);
+    addToFace (face, caption);
     dimLabels.push_back (&caption);
 }
 
-void GoSequencerEditor::setUpText (Tab tab, juce::Label& label, juce::Justification justification)
+void GoSequencerEditor::setUpText (Face face, juce::Label& label, juce::Justification justification)
 {
-    label.setFont (valueFont());
+    label.setFont (valueFont().withHeight (12.0f));
     label.setColour (juce::Label::textColourId, theme::dimText);
     label.setBorderSize ({ 0, 0, 0, 0 });
     label.setJustificationType (justification);
-    addToTab (tab, label);
+    label.setInterceptsMouseClicks (false, false);
+    addToFace (face, label);
     dimLabels.push_back (&label);
 }
 
-void GoSequencerEditor::setUpSlider (Tab tab, juce::Slider& slider, juce::Label& caption,
-                                     const juce::String& text, const juce::String& parameterID,
-                                     std::unique_ptr<SliderAttachment>& attachment, int valueWidth)
+void GoSequencerEditor::setUpKnob (Face face, Knob& knob, juce::Label& caption, const juce::String& text,
+                                   const juce::String& parameterID, std::unique_ptr<SliderAttachment>& attachment,
+                                   std::function<std::optional<double> (const juce::String&)> parse)
 {
-    slider.setSliderStyle (juce::Slider::LinearHorizontal);
-    slider.setTextBoxStyle (juce::Slider::TextBoxAbove, false, valueWidth, captionHeight);
-    slider.setRepaintsOnMouseActivity (true);
-    slider.setTitle (text);
-    addToTab (tab, slider);
+    knob.setSliderStyle (juce::Slider::RotaryVerticalDrag);
+    knob.setRotaryParameters (juce::MathConstants<float>::pi * 1.25f, juce::MathConstants<float>::pi * 2.75f, true);
+    knob.setTextBoxStyle (juce::Slider::TextBoxBelow, false, knobWidth, valueHeight);
+    knob.setMouseDragSensitivity (220);
+    knob.setRepaintsOnMouseActivity (true);
+    knob.setTitle (text);
+    knob.parse = std::move (parse);
+    knob.onNote = [this, text] (const juce::String& note) { showMessage (text + ": " + note); };
+    addToFace (face, knob);
 
-    //  after the slider, so the caption sits over the cell the slider spans
-    setUpCaption (tab, caption, text);
+    setUpCaption (face, caption, text);
+    caption.setJustificationType (juce::Justification::centred);
 
-    attachment = std::make_unique<SliderAttachment> (processor.apvts, parameterID, slider);
+    attachment = std::make_unique<SliderAttachment> (processor.apvts, parameterID, knob);
 }
 
-void GoSequencerEditor::setUpCombo (Tab tab, juce::ComboBox& box, juce::Label& caption,
-                                    const juce::String& text, const juce::StringArray& items,
-                                    const juce::String& parameterID,
-                                    std::unique_ptr<ComboBoxAttachment>& attachment)
+void GoSequencerEditor::setUpCell (Knob& cell, juce::Label& caption, const juce::String& text,
+                                   const juce::String& parameterID, std::unique_ptr<SliderAttachment>& attachment)
 {
-    box.addItemList (items, 1);
-    box.setTitle (text);
-    addToTab (tab, box);
+    //  a bar slider is the one whose text box covers it: a click types, a drag
+    //  changes - ten pixels a channel
+    cell.setSliderStyle (juce::Slider::LinearBarVertical);
+    cell.setSliderSnapsToMousePosition (false);
+    cell.setTextBoxStyle (juce::Slider::TextBoxBelow, false, 30, 30);
+    cell.setMouseDragSensitivity (160);
+    cell.setRepaintsOnMouseActivity (true);
+    cell.setTitle ("head " + text + " channel");
+    cell.parse = wholeParser();
+    cell.onNote = [this] (const juce::String& note) { showMessage ("channel: " + note); };
+    addToFace (patchFace, cell);
 
-    setUpCaption (tab, caption, text);
+    setUpCaption (patchFace, caption, text);
+    caption.setJustificationType (juce::Justification::centred);
 
-    attachment = std::make_unique<ComboBoxAttachment> (processor.apvts, parameterID, box);
+    attachment = std::make_unique<SliderAttachment> (processor.apvts, parameterID, cell);
 }
 
-void GoSequencerEditor::setUpToggle (Tab tab, juce::TextButton& button, const juce::String& text,
-                                     const juce::String& parameterID,
-                                     std::unique_ptr<ButtonAttachment>& attachment)
+void GoSequencerEditor::setUpSegments (Face face, SegmentedChoice& segments, std::vector<SegmentedChoice::Item> items,
+                                       const juce::String& parameterID,
+                                       std::unique_ptr<juce::ParameterAttachment>& attachment)
+{
+    segments.setItems (std::move (items));
+    addToFace (face, segments);
+
+    auto* parameter = processor.apvts.getParameter (parameterID);
+    jassert (parameter != nullptr);
+
+    //  a choice parameter's denormalised value is its index
+    attachment = std::make_unique<juce::ParameterAttachment> (*parameter, [&segments] (float value)
+    {
+        segments.setSelectedValue (juce::roundToInt (value));
+    });
+
+    segments.onSelect = [a = attachment.get()] (int value) { a->setValueAsCompleteGesture ((float) value); };
+    attachment->sendInitialUpdate();
+}
+
+void GoSequencerEditor::setUpLed (Face face, juce::TextButton& button, const juce::String& text,
+                                  const juce::String& parameterID, std::unique_ptr<ButtonAttachment>& attachment)
 {
     button.setButtonText (text);
+    button.getProperties().set (ledProperty, true);
     button.setClickingTogglesState (true);
-    addToTab (tab, button);
+    addToFace (face, button);
 
     attachment = std::make_unique<ButtonAttachment> (processor.apvts, parameterID, button);
 }
 
-void GoSequencerEditor::setUpButton (Tab tab, juce::TextButton& button, const juce::String& text,
+void GoSequencerEditor::setUpButton (Face face, juce::TextButton& button, const juce::String& text,
                                      std::function<void()> onClick)
 {
     button.setButtonText (text);
     button.onClick = std::move (onClick);
-    addToTab (tab, button);
+    addToFace (face, button);
 }
 
 //==============================================================================
@@ -909,7 +1423,7 @@ void GoSequencerEditor::showMessage (const juce::String& text)
 {
     message = text;
     messageCountdown = text.isEmpty() ? 0 : 90;
-    repaint (headerBounds);
+    plate.repaint (topBarBounds);
 }
 
 void GoSequencerEditor::refreshOpeningDisplay()
@@ -1188,213 +1702,317 @@ void GoSequencerEditor::filesDropped (const juce::StringArray& files, int, int)
     }
 }
 
+
+//==============================================================================
+namespace
+{
+    /** What the display in the top bar shows, as key and value pairs. */
+    std::vector<std::pair<juce::String, juce::String>> displayFields (const GoSequencerProcessor& processor)
+    {
+        const int steps = juce::jmax (1, processor.cycleSteps());
+        const int step  = juce::jlimit (0, steps - 1, processor.currentStep());
+
+        const juce::String mode = processor.isQuads()       ? juce::String ("4 quadrants")
+                                : processor.isPolyrhythm()  ? juce::String (processor.ringCount()) + " rings"
+                                                            : juce::String ("spiral");
+
+        std::vector<std::pair<juce::String, juce::String>> fields
+        {
+            { "STEP", juce::String (step + 1) + "/" + juce::String (steps) },
+            { "MODE", mode },
+            { "CAPT", juce::String (juce::CharPointer_UTF8 ("\xe2\x97\x8f ")) + juce::String (processor.capturedBlack())
+                      + juce::String (juce::CharPointer_UTF8 ("  \xe2\x97\x8b ")) + juce::String (processor.capturedWhite()) },
+        };
+
+        if (processor.hasGame())
+            fields.push_back ({ "MOVE", juce::String (processor.gamePosition()) + "/" + juce::String (processor.gameMoveCount()) });
+
+        return fields;
+    }
+}
+
 //==============================================================================
 void GoSequencerEditor::resized()
 {
-    auto area = getLocalBounds().reduced (margin);
+    //  the plate is laid out once at its own size; the window only scales it
+    const float scale = juce::jmin ((float) getWidth()  / (float) Faceplate::width,
+                                    (float) getHeight() / (float) Faceplate::height);
 
-    //  ---- the board: as big as the height allows, its two dropdowns under it
-    const int boardSide = juce::jmax (160, juce::jmin (area.getHeight() - rowGap - cellHeight,
-                                                       area.getWidth() - columnGap - minControlsWidth));
+    plate.setBounds (0, 0, Faceplate::width, Faceplate::height);
+    plate.setTransform (juce::AffineTransform::scale (scale));
 
-    auto boardColumn = area.removeFromLeft (boardSide);
-    area.removeFromLeft (columnGap);
+    sections.clear();
 
-    board.setBounds (boardColumn.removeFromTop (boardSide));
-    boardColumn.removeFromTop (rowGap);
-
+    const auto addSection = [this] (juce::Rectangle<int> bounds, const juce::String& title, Face face)
     {
-        auto cells = columns (boardColumn.removeFromTop (cellHeight), 2);
-        placeLabelled (cells[0], sizeCaption, sizeBox);
-        placeLabelled (cells[1], colourCaption, colourBox);
+        sections.push_back ({ bounds, title, face });
+        return bounds.withTrimmedLeft (sectionPadX).withTrimmedRight (sectionPadX)
+                     .withTrimmedTop (sectionPadTop).withTrimmedBottom (sectionPadBottom);
+    };
+
+    const auto gap = [] (juce::Rectangle<int>& area, int pixels) { area.removeFromTop (pixels); };
+
+    //  ---- top bar ----------------------------------------------------------
+    topBarBounds = { 22, 16, Faceplate::width - 44, 48 };
+    {
+        auto bar = topBarBounds;
+
+        const int dark = ledWidth (darkModeButton);
+        darkModeButton.setBounds (bar.removeFromRight (dark).withSizeKeepingCentre (dark, ledHeight));
+        bar.removeFromRight (18);
+        faceSwitch.setBounds (bar.removeFromRight (150).withSizeKeepingCentre (150, 28));
+        bar.removeFromRight (18);
+
+        //  the wordmark and the next stone are painted; the display fills what is left
+        bar.removeFromLeft (textWidth (titleFont(), "GO SEQUENCER") + 10 + 12 + 26);
+        displayBounds = bar.withSizeKeepingCentre (bar.getWidth(), 36);
     }
 
-    //  ---- the controls column: title and status, the tabs, then one tab ----
-    auto column = area.removeFromLeft (juce::jmin (area.getWidth(), maxControlsWidth));
+    constexpr int top = 78, bottom = Faceplate::height - 18;
+    constexpr int leftX = 22, railWidth = 282, boardX = leftX + railWidth + 19, boardSide = 556;
+    constexpr int rightX = boardX + boardSide + 19, rightWidth = Faceplate::width - 22 - rightX;
 
-    headerBounds = column.removeFromTop (titleHeight + statusHeight);
-    column.removeFromTop (headerGap);
-
+    //  ==== PLAY, left: clock, voice, activity ================================
     {
-        //  top right of the title line, whichever tab is open
-        auto titleLine = headerBounds.withHeight (titleHeight);
-        darkModeButton.setBounds (titleLine.removeFromRight (pillWidth (darkModeButton)).reduced (0, 2));
+        auto clock = addSection ({ leftX, top, railWidth, 164 }, "CLOCK", playFace);
+        modeSwitch.setBounds (clock.removeFromTop (46));
+        gap (clock, 8);
+
+        auto row = clock.removeFromTop (knobHeight);
+        placeKnob (knobCell (row), rateCaption, rateKnob);
+        placeKnob (knobCell (row), tempoCaption, tempoKnob);
+        row.removeFromLeft (4);
+        freeRunButton.setBounds (row.getX(), row.getY() + 14, ledWidth (freeRunButton), ledHeight);
+        tieNotesButton.setBounds (row.getX(), row.getY() + 42, ledWidth (tieNotesButton), ledHeight);
+
+        auto voice = addSection ({ leftX, top + 164 + sectionGap, railWidth, 228 }, "VOICE", playFace);
+        row = voice.removeFromTop (knobHeight);
+        placeKnob (knobCell (row), noteCaption, noteKnob);
+        placeKnob (knobCell (row), gateCaption, gateKnob);
+        placeKnob (knobCell (row), lifeCaption, lifeKnob);
+        gap (voice, 6);
+        row = voice.removeFromTop (knobHeight);
+        placeKnob (knobCell (row), spreadCaption, spreadKnob);
+        placeKnob (knobCell (row), blackVelocityCaption, blackVelocityKnob);
+        placeKnob (knobCell (row), whiteVelocityCaption, whiteVelocityKnob);
+        gap (voice, 10);
+        row = voice.removeFromTop (segmentHeight);
+        lifeModeSwitch.setBounds (row.removeFromRight (164));
+        lifeModeCaption.setBounds (row);
+
+        const int activityTop = top + 164 + sectionGap + 228 + sectionGap;
+        auto lamps = addSection ({ leftX, activityTop, railWidth, bottom - activityTop }, "ACTIVITY", playFace);
+        activity.setBounds (lamps.removeFromTop (48));
+        gap (lamps, 8);
+        activityLabel.setBounds (lamps.removeFromTop (18));
+        gap (lamps, 8);
+        lapLabel.setBounds (lamps);
     }
 
+    //  ==== PATCH, left: routing, the port, the rules =========================
     {
-        auto strip = column.removeFromTop (tabHeight);
+        auto routing = addSection ({ leftX, top, railWidth, 150 }, "ROUTING", patchFace);
+        routingCaption.setBounds (routing.removeFromTop (captionHeight));
+        gap (routing, 6);
 
-        //  six tabs only just fit the narrowest window, so the gaps between them
-        //  close up a little before any tab is cut short
-        int textTotal = 0;
+        auto bay = routing.removeFromTop (46);
+        const int columns = 2 + headChannels;
+        const float columnWidth = (float) bay.getWidth() / (float) columns;
 
-        for (auto& tab : tabButtons)
-            textTotal += textWidth (tabFont(), tab.getButtonText().toUpperCase()) + 2;
-
-        const int gap = juce::jlimit (8, tabGap, (strip.getWidth() - textTotal) / juce::jmax (1, tabCount - 1));
-
-        for (auto& tab : tabButtons)
+        const auto placeCell = [&] (int column, juce::Label& caption, Knob& cell)
         {
-            tab.setBounds (strip.removeFromLeft (textWidth (tabFont(), tab.getButtonText().toUpperCase()) + 2));
-            strip.removeFromLeft (gap);
-        }
+            const int x = bay.getX() + juce::roundToInt ((float) column * columnWidth);
+            const int w = juce::roundToInt (columnWidth) - 3;
+            caption.setBounds (x, bay.getY(), w, captionHeight);
+            cell.setBounds (x, bay.getY() + 16, w, 30);
+        };
+
+        placeCell (0, blackChannelCaption, blackChannelCell);
+        placeCell (1, whiteChannelCaption, whiteChannelCell);
+
+        for (int h = 0; h < headChannels; ++h)
+            placeCell (2 + h, headChannelCaptions[(size_t) h], headChannelCells[(size_t) h]);
+
+        gap (routing, 8);
+        routingLabel.setBounds (routing);
+
+        auto port = addSection ({ leftX, top + 150 + sectionGap, railWidth, 118 }, "MIDI OUT PORT", patchFace);
+        portBox.setBounds (port.removeFromTop (controlHeight));
+        gap (port, 8);
+        portStatusLabel.setBounds (port);
+
+        const int rulesTop = top + 150 + sectionGap + 118 + sectionGap;
+        auto rules = addSection ({ leftX, rulesTop, railWidth, bottom - rulesTop }, "RULES", patchFace);
+        auto row = rules.removeFromTop (ledHeight);
+        koButton.setBounds (row.removeFromLeft (ledWidth (koButton)));
+        row.removeFromLeft (24);
+        selfCaptureButton.setBounds (row.removeFromLeft (ledWidth (selfCaptureButton)));
+        gap (rules, 8);
+        rulesLabel.setBounds (rules.removeFromTop (36));
     }
 
-    column.removeFromTop (headerGap);
-
-    //  Every tab is laid out in the same rectangle, whether it is open or not,
-    //  so showTab() only has to flip visibility.
-
-    //  ---- sequencer --------------------------------------------------------
+    //  ==== the board, on both faces ==========================================
     {
-        auto rows = column;
+        board.setBounds (boardX, top, boardSide, boardSide);
 
-        auto cells = columns (nextRow (rows, cellHeight), 2);
-        placeLabelled (cells[0], modeCaption, modeBox);
-        placeLabelled (cells[1], rateCaption, rateBox);
+        auto strip = juce::Rectangle<int> (boardX, top + boardSide + 10, boardSide, 28);
+        sizeCaption.setBounds (strip.removeFromLeft (44));
+        sizeSwitch.setBounds (strip.removeFromLeft (188));
+        strip.removeFromLeft (14);
+        placeCaption.setBounds (strip.removeFromLeft (44));
+        placeSwitch.setBounds (strip.removeFromLeft (120));
+        clearButton.setBounds (strip.removeFromRight (pillWidth (clearButton)).withSizeKeepingCentre (pillWidth (clearButton), controlHeight));
 
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], noteCaption, noteSlider);
-        placeSlider (cells[1], gateCaption, gateSlider);
-
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], lifeCaption, lifeSlider);
-        placeLabelled (cells[1], lifeModeCaption, lifeModeBox);
-
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeControl (cells[0], freeRunButton);
-        placeSlider (cells[1], tempoCaption, tempoSlider);
-
-        //  spread only means anything with more than one head, so it goes last
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], spreadCaption, spreadSlider);
-        placeControl (cells[1], tieNotesButton);
+        hintLabel.setBounds (boardX, top + boardSide + 44, boardSide, 18);
     }
 
-    //  ---- board ------------------------------------------------------------
+    //  ==== PLAY, right: the game record, the players =========================
     {
-        auto rows = column;
-
-        flow (nextRow (rows, controlHeight), { &koButton, &selfCaptureButton, &clearButton });
-        hintLabel.setBounds (rows.removeFromTop (textLinesHeight));
-    }
-
-    //  ---- channels ---------------------------------------------------------
-    {
-        auto rows = column;
-
-        auto cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], blackVelocityCaption, blackVelocitySlider);
-        placeSlider (cells[1], whiteVelocityCaption, whiteVelocitySlider);
-
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], blackChannelCaption, blackChannelSlider);
-        placeSlider (cells[1], whiteChannelCaption, whiteChannelSlider);
-
-        //  one per playhead, three to a row - three rows for the nine rings of a 19x19
-        for (int first = 0; first < headChannels; first += 3)
+        auto game = addSection ({ rightX, top, rightWidth, 252 }, "GAME RECORD", playFace);
+        gameWellBounds = game.removeFromTop (44);
         {
-            cells = columns (nextRow (rows, cellHeight), 3);
-
-            for (int h = first; h < juce::jmin (first + 3, headChannels); ++h)
-                placeSlider (cells[(size_t) (h - first)], headChannelCaptions[(size_t) h],
-                             headChannelSliders[(size_t) h]);
+            auto well = gameWellBounds.reduced (10, 5);
+            gameTitleLabel.setBounds (well.removeFromTop (17));
+            gameDetailLabel.setBounds (well);
         }
+        gap (game, 8);
+        flow (game.removeFromTop (controlHeight), { &loadButton, &unloadButton });
+        gap (game, 8);
 
-        //  the port across the whole column, since a port's name can be long,
-        //  and under it two lines saying whether it is open
-        placeLabelled (nextRow (rows, cellHeight), portCaption, portBox);
-        portStatusLabel.setBounds (rows.removeFromTop (textLinesHeight));
+        auto row = game.removeFromTop (knobHeight);
+        placeKnob (knobCell (row), gameRateCaption, gameRateKnob);
+        placeKnob (knobCell (row), waveGapCaption, waveGapKnob);
+        row.removeFromLeft (4);
+        runGameButton.setBounds    (row.getX(), row.getY() + 4,  ledWidth (runGameButton),    ledHeight);
+        loopGameButton.setBounds   (row.getX(), row.getY() + 28, ledWidth (loopGameButton),   ledHeight);
+        waveReplayButton.setBounds (row.getX(), row.getY() + 52, ledWidth (waveReplayButton), ledHeight);
+        gap (game, 6);
+
+        auto scrub = game.removeFromTop (40);
+        auto stepper = scrub.removeFromRight (2 * stepButtonWidth + 4);
+        scrub.removeFromRight (8);
+        moveSlider.setBounds (scrub);
+        moveCaption.setBounds (scrub.getX(), scrub.getY(), 70, valueHeight);
+        stepper.removeFromTop (16);
+        previousMoveButton.setBounds (stepper.removeFromLeft (stepButtonWidth).withHeight (controlHeight));
+        stepper.removeFromLeft (4);
+        nextMoveButton.setBounds (stepper.removeFromLeft (stepButtonWidth).withHeight (controlHeight));
+
+        const int playersTop = top + 252 + sectionGap;
+        auto players = addSection ({ rightX, playersTop, rightWidth, bottom - playersTop }, "PLAYERS", playFace);
+        row = players.removeFromTop (segmentHeight);
+        playersSwitch.setBounds (row.removeFromRight (136));
+        aiPlayButton.setBounds (row.removeFromLeft (ledWidth (aiPlayButton)).withSizeKeepingCentre (ledWidth (aiPlayButton), ledHeight));
+        gap (players, 8);
+
+        row = players.removeFromTop (knobHeight);
+        placeKnob (knobCell (row), aiMovesCaption, aiMovesKnob);
+        placeKnob (knobCell (row), aiVariationCaption, aiVariationKnob);
+        placeKnob (knobCell (row), aiSeedCaption, aiSeedKnob);
+        gap (players, 8);
+
+        row = players.removeFromTop (controlHeight);
+        openingCaption.setBounds (row.removeFromLeft (70));
+        flowRight (row, { &openingFromBoardButton, &openingBookButton });
+        gap (players, 4);
+        openingLabel.setBounds (players.removeFromTop (34));
+        gap (players, 6);
+        playersRuleY = players.getY();
+        gap (players, 10);
+
+        row = players.removeFromTop (segmentHeight);
+        opponentSwitch.setBounds (row.removeFromRight (104));
+        row.removeFromRight (6);
+        opponentCaption.setBounds (row.removeFromRight (64));
+        aiOpponentButton.setBounds (row.removeFromLeft (ledWidth (aiOpponentButton)).withSizeKeepingCentre (ledWidth (aiOpponentButton), ledHeight));
+        gap (players, 8);
+        flow (players.removeFromTop (controlHeight), { &passButton, &newMatchButton });
+        gap (players, 6);
+        matchLabel.setBounds (players.removeFromTop (36));
     }
 
-    //  ---- game record ------------------------------------------------------
+    //  ==== PATCH, right: the Launchpad =======================================
     {
-        auto rows = column;
-
-        {
-            auto line = nextRow (rows, 20);
-            gameTitleLabel.setBounds (line.removeFromLeft (line.getWidth() / 2));
-            gameDetailLabel.setBounds (line);
-        }
-
-        flow (nextRow (rows, controlHeight), { &loadButton, &unloadButton });
-
-        {
-            //  Wave Gap only means anything once Wave Replay is on -
-            //  timerCallback() greys the slider out the rest of the time
-            auto cells = columns (nextRow (rows, cellHeight), 2);
-            placeLabelled (cells[0], gameRateCaption, gameRateBox);
-            placeSlider (cells[1], waveGapCaption, waveGapSlider);
-        }
-
-        flow (nextRow (rows, controlHeight), { &runGameButton, &loopGameButton, &waveReplayButton });
-
-        {
-            auto row = nextRow (rows, cellHeight);
-            auto stepper = row.removeFromRight (2 * stepButtonWidth + pillGap);
-            row.removeFromRight (columnGutter);
-            placeSlider (row, moveCaption, moveSlider);
-
-            stepper.removeFromTop (captionHeight);
-            auto buttons = stepper.removeFromTop (controlHeight);
-            previousMoveButton.setBounds (buttons.removeFromLeft (stepButtonWidth));
-            buttons.removeFromLeft (pillGap);
-            nextMoveButton.setBounds (buttons.removeFromLeft (stepButtonWidth));
-        }
-    }
-
-    //  ---- self-play --------------------------------------------------------
-    {
-        auto rows = column;
-
-        //  the switch, then what a game is written from - which pair plays, and
-        //  the three numbers; timerCallback() greys those out while it is off
-        auto cells = columns (nextRow (rows, cellHeight), 2);
-        placeControl (cells[0], aiPlayButton);
-        placeLabelled (cells[1], aiPlayersCaption, aiPlayersBox);
-
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], aiMovesCaption, aiMovesSlider);
-        placeSlider (cells[1], aiVariationCaption, aiVariationSlider);
-
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeSlider (cells[0], aiSeedCaption, aiSeedSlider);
-
-        {
-            //  two buttons, and under them the line that says which opening is in force
-            auto row = nextRow (rows, cellHeight);
-            openingCaption.setBounds (row.removeFromTop (captionHeight));
-            flow (row.removeFromTop (controlHeight), { &openingFromBoardButton, &openingBookButton });
-        }
-
-        openingLabel.setBounds (rows.removeFromTop (textLinesHeight));
-
-        //  playing against them: the switch and which colour they take, then the
-        //  two buttons a game needs, and under them whose move it is
-        cells = columns (nextRow (rows, cellHeight), 2);
-        placeControl (cells[0], aiOpponentButton);
-        placeLabelled (cells[1], aiOpponentCaption, aiOpponentBox);
-
-        flow (nextRow (rows, controlHeight), { &passButton, &newMatchButton });
-
-        matchLabel.setBounds (rows.removeFromTop (textLinesHeight));
-    }
-
-    //  ---- the Launchpad ----------------------------------------------------
-    {
-        auto rows = column;
+        auto pads = addSection ({ rightX, top, rightWidth, bottom - top }, "LAUNCHPAD X", patchFace);
 
         //  in and out side by side, since on Windows the two are named apart
-        auto cells = columns (nextRow (rows, cellHeight), 2);
-        placeLabelled (cells[0], padsInCaption, padsInBox);
-        placeLabelled (cells[1], padsOutCaption, padsOutBox);
+        auto row = pads.removeFromTop (captionHeight + 2 + controlHeight);
+        auto in = row.removeFromLeft ((row.getWidth() - 12) / 2);
+        row.removeFromLeft (12);
+        padsInCaption.setBounds (in.removeFromTop (captionHeight));
+        padsInBox.setBounds (in.withTrimmedTop (2));
+        padsOutCaption.setBounds (row.removeFromTop (captionHeight));
+        padsOutBox.setBounds (row.withTrimmedTop (2));
+        gap (pads, 10);
 
-        flow (nextRow (rows, controlHeight), { &padsFindButton, &padsSizeButton, &padsStopButton });
+        flow (pads.removeFromTop (controlHeight), { &padsFindButton, &padsStopButton });
+        gap (pads, 6);
+        flow (pads.removeFromTop (controlHeight), { &padsSizeButton });
+        gap (pads, 8);
 
         //  three lines, because the one that says the port is taken is long
-        padsStatusLabel.setBounds (nextRow (rows, textLinesHeight * 3 / 2));
-        padsDiagram.setBounds (rows);
+        padsStatusLabel.setBounds (pads.removeFromTop (54));
+        gap (pads, 8);
+        padsDiagram.setBounds (pads);
     }
+}
+
+//==============================================================================
+void GoSequencerEditor::refreshModeDisplay()
+{
+    const int heads = processor.headCount();
+    const int size  = processor.boardSize();
+    const bool multi = heads > 1;
+
+    //  spread pushes the heads apart in pitch, so it has nothing to say until
+    //  there is more than one of them; velocity follows the colour in every mode
+    spreadKnob.setEnabled (multi);
+
+    //  spiral routes by colour, the multi head modes by playhead, and a 9x9 has
+    //  fewer rings than a 13x13 - so grey out what this mode is not using
+    //  rather than let it look assignable
+    blackChannelCell.setEnabled (! multi);
+    whiteChannelCell.setEnabled (! multi);
+
+    for (int h = 0; h < headChannels; ++h)
+        headChannelCells[(size_t) h].setEnabled (multi && h < heads);
+
+    const juce::String dot (juce::CharPointer_UTF8 (" \xc2\xb7 "));
+    juce::String lapText;
+
+    if (processor.isPolyrhythm())
+    {
+        //  the rings are different lengths - which is the polyrhythm - so say
+        //  how long each one is, and when they all meet again
+        long long together = 1;
+
+        for (int r = 0; r < heads; ++r)
+        {
+            const int length = go::ringLength (size, r);
+            lapText << (r > 0 ? dot : juce::String()) << length;
+            together = std::lcm (together, (long long) length);
+        }
+
+        lapText << "  steps a lap\nall heads line up again after " << juce::String (together) << " steps";
+        activityLabel.setText (juce::String (heads) + " rings, each head on its own channel", juce::dontSendNotification);
+    }
+    else if (processor.isQuads())
+    {
+        lapText << "4 x " << go::quadSteps (size) << "  steps a lap\nthe four quadrants mirror one another";
+        activityLabel.setText ("4 quadrants, each head on its own channel", juce::dontSendNotification);
+    }
+    else
+    {
+        lapText << size * size << "  steps a lap - the whole board";
+        activityLabel.setText ("one head - notes go out by stone colour", juce::dontSendNotification);
+    }
+
+    lapLabel.setText (lapText, juce::dontSendNotification);
+    lapLabel.setColour (juce::Label::textColourId, theme::ink);
+
+    routingLabel.setText (multi ? "rings and quads route by playhead - black and white are not used in this mode"
+                                : "spiral routes by stone colour - heads 1 to 9 are not used in this mode",
+                          juce::dontSendNotification);
 }
 
 //==============================================================================
@@ -1406,27 +2024,17 @@ void GoSequencerEditor::timerCallback()
     if (messageCountdown == 0 && message.isNotEmpty())
         message.clear();
 
-    const int heads = processor.headCount();
-
-    if (heads != lastModeShown)
+    //  keyed on the mode itself, not on how many heads it runs: quads out, quads
+    //  in and poly on a 9x9 all have four, and each greys out different things
     {
-        lastModeShown = heads;
+        const int modeKey = (processor.isPolyrhythm() ? 1 : 0) + (processor.isQuads() ? 2 : 0)
+                          + (processor.quadsWindOut() ? 4 : 0) + 8 * processor.boardSize();
 
-        const bool multi = (heads > 1);
-
-        //  spread pushes the heads apart in pitch, so it has nothing to say
-        //  until there is more than one of them; velocity follows the colour
-        //  in every mode
-        spreadSlider.setEnabled (multi);
-
-        //  spiral routes by colour, the multi head modes by playhead, and a
-        //  9x9 has fewer rings than a 13x13 - so grey out what this mode is
-        //  not using rather than let it look assignable
-        blackChannelSlider.setEnabled (! multi);
-        whiteChannelSlider.setEnabled (! multi);
-
-        for (int h = 0; h < headChannels; ++h)
-            headChannelSliders[(size_t) h].setEnabled (multi && h < heads);
+        if (modeKey != lastModeKeyShown)
+        {
+            lastModeKeyShown = modeKey;
+            refreshModeDisplay();
+        }
     }
 
     const bool waveReplay = processor.waveReplayOn();
@@ -1438,7 +2046,7 @@ void GoSequencerEditor::timerCallback()
         //  Wave Gap only means anything once Wave Replay is on. Loop still
         //  does - it wraps the record without clearing the board, which is
         //  what keeps the wave running - so that switch stays live.
-        waveGapSlider.setEnabled (waveReplay);
+        waveGapKnob.setEnabled (waveReplay);
     }
 
     //  A run replaces its own record every time a game ends, and that happens on
@@ -1453,10 +2061,10 @@ void GoSequencerEditor::timerCallback()
         lastAiShown = ai;
         lastAiGameShown = aiGame;
 
-        for (auto* slider : { &aiMovesSlider, &aiVariationSlider, &aiSeedSlider })
-            slider->setEnabled (ai);
+        for (auto* knob : { &aiMovesKnob, &aiVariationKnob, &aiSeedKnob })
+            knob->setEnabled (ai);
 
-        aiPlayersBox.setEnabled (ai);
+        playersSwitch.setEnabled (ai);
 
         refreshGameDisplay();
     }
@@ -1528,77 +2136,166 @@ void GoSequencerEditor::timerCallback()
             moveSlider.setValue ((double) position, juce::dontSendNotification);
     }
 
-    //  the header only when something in it reads differently, not on every tick
-    auto header = message.isNotEmpty() ? message : statusLine();
-    header << (processor.colourForNextMove() == go::Stone::black ? "|b" : "|w");
+    //  the top bar only when something in it reads differently, not on every tick
+    juce::String header = message;
+
+    for (const auto& field : displayFields (processor))
+        header << "|" << field.second;
+
+    header << (processor.isRunning() ? "|run" : "|stop")
+           << (processor.colourForNextMove() == go::Stone::black ? "|b" : "|w");
 
     if (header != lastHeaderShown)
     {
         lastHeaderShown = header;
-        repaint (headerBounds);
+        plate.repaint (topBarBounds);
     }
 }
 
 void GoSequencerEditor::paint (juce::Graphics& g)
 {
+    //  the plate covers the window; this only shows in a rounding gap at its edge
+    g.fillAll (theme::background);
+}
+
+void GoSequencerEditor::paintPlate (juce::Graphics& g)
+{
     g.fillAll (theme::background);
 
-    auto header = headerBounds;
-    auto titleLine = header.removeFromTop (titleHeight);
-
-    const juce::String title ("GO SEQUENCER");
-
-    g.setFont (titleFont());
-    g.setColour (theme::ink);
-    g.drawText (title, titleLine.removeFromLeft (textWidth (titleFont(), title) + 2),
-                juce::Justification::centredLeft, false);
-
-    //  the stone the next click will place
-    titleLine.removeFromLeft (10);
-    BoardComponent::drawStone (g, titleLine.removeFromLeft (12).getCentre().toFloat(), 5.5f,
-                               processor.colourForNextMove() == go::Stone::black);
-
-    g.setFont (statusFont());
-
-    if (message.isNotEmpty())
+    //  four screws, the one ornament
+    for (auto corner : { juce::Point<float> (11.5f, 11.5f), { (float) Faceplate::width - 11.5f, 11.5f },
+                         { 11.5f, (float) Faceplate::height - 11.5f },
+                         { (float) Faceplate::width - 11.5f, (float) Faceplate::height - 11.5f } })
     {
-        g.setColour (theme::accent);
-        g.drawText (message, header, juce::Justification::centredLeft, true);
+        const auto head = juce::Rectangle<float> (9.0f, 9.0f).withCentre (corner);
+        g.setColour (theme::well);
+        g.fillEllipse (head);
+        g.setColour (theme::hairline);
+        g.drawEllipse (head, 1.0f);
+        g.setColour (theme::faintText);
+        g.drawLine (juce::Line<float> (corner.translated (-3.0f, 2.0f), corner.translated (3.0f, -2.0f)), 1.0f);
     }
-    else
+
+    //  ---- the wordmark, and the stone the next click will place
     {
+        auto bar = topBarBounds;
+        const juce::String title ("GO SEQUENCER");
+        const int width = textWidth (titleFont(), title) + 2;
+
+        g.setFont (titleFont());
+        g.setColour (theme::ink);
+        g.drawText (title, bar.removeFromLeft (width), juce::Justification::centredLeft, false);
+
+        bar.removeFromLeft (10);
+        BoardComponent::drawStone (g, bar.removeFromLeft (12).getCentre().toFloat(), 5.5f,
+                                   processor.colourForNextMove() == go::Stone::black);
+    }
+
+    paintDisplay (g, displayBounds.toFloat());
+
+    //  ---- the section frames, each with its name cut into the top edge
+    for (const auto& section : sections)
+    {
+        if (section.face != currentFace && section.face != pinned)
+            continue;
+
+        g.setColour (theme::hairline);
+        g.drawRoundedRectangle (section.bounds.toFloat().reduced (0.5f), 6.0f, 1.0f);
+
+        const int width = textWidth (sectionFont(), section.title) + 12;
+        const auto label = juce::Rectangle<int> (section.bounds.getX() + 10, section.bounds.getY() - 8, width, 16);
+
+        g.setColour (theme::background);
+        g.fillRect (label);
+        g.setFont (sectionFont());
         g.setColour (theme::dimText);
-        g.drawText (statusLine(), header, juce::Justification::centredLeft, true);
+        g.drawText (section.title, label, juce::Justification::centred, false);
+    }
+
+    if (currentFace == playFace)
+    {
+        //  the game record's title sits in a recessed well, like a read-out
+        g.setColour (theme::well);
+        g.fillRoundedRectangle (gameWellBounds.toFloat(), 5.0f);
+
+        //  self-play above the rule, playing against them below it
+        g.setColour (theme::hairline);
+        g.fillRect (juce::Rectangle<int> (gameWellBounds.getX(), playersRuleY, gameWellBounds.getWidth(), 1));
     }
 
     if (dragHighlight)
     {
         g.setColour (theme::accent);
-        g.drawRect (getLocalBounds(), 2);
+        g.drawRect (plate.getLocalBounds(), 2);
     }
 }
 
-juce::String GoSequencerEditor::statusLine() const
+void GoSequencerEditor::paintDisplay (juce::Graphics& g, juce::Rectangle<float> area)
 {
-    const juce::String dot (juce::CharPointer_UTF8 ("  \xc2\xb7  "));
+    g.setColour (theme::lcd);
+    g.fillRoundedRectangle (area, 5.0f);
+    g.setColour (juce::Colours::black.withAlpha (0.25f));
+    g.drawRoundedRectangle (area.reduced (0.5f), 5.0f, 1.0f);
 
-    const int steps = juce::jmax (1, processor.cycleSteps());
-    const int step = juce::jlimit (0, steps - 1, processor.currentStep());
+    auto inner = area.reduced (8.0f, 0.0f);
 
-    juce::String status;
-    status << "step " << (step + 1) << "/" << steps;
+    if (message.isNotEmpty())
+    {
+        g.setFont (valueFont());
+        g.setColour (theme::accent);
+        g.drawFittedText (message, inner.reduced (6.0f, 0.0f).toNearestInt(), juce::Justification::centredLeft, 1, 0.85f);
+        return;
+    }
 
-    if (processor.isQuads())
-        status << dot << "4 quadrants";
-    else if (processor.isPolyrhythm())
-        status << dot << processor.ringCount() << " rings";
+    //  the transport, at the right hand end: a lamp and a word
+    {
+        const bool running = processor.isRunning();
+        const juce::String word = running ? "running" : "stopped";
+        const auto font = theme::monoFont (12.5f);
+        auto slot = inner.removeFromRight ((float) textWidth (font, word) + 24.0f);
 
-    status << dot << "captured  black " << processor.capturedBlack()
-           << "  white " << processor.capturedWhite();
+        const auto lamp = juce::Rectangle<float> (7.0f, 7.0f).withCentre ({ slot.getX() + 6.0f, slot.getCentreY() });
 
-    if (processor.hasGame())
-        status << dot << "move " << processor.gamePosition() << "/" << processor.gameMoveCount();
+        if (running)
+        {
+            g.setColour (theme::accent.withAlpha (0.35f));
+            g.fillEllipse (lamp.expanded (2.5f));
+        }
 
-    status << dot << (processor.isRunning() ? "running" : "stopped");
-    return status;
+        g.setColour (running ? theme::accent : theme::lcdDim);
+        g.fillEllipse (lamp);
+
+        g.setFont (font);
+        g.setColour (theme::lcdInk);
+        g.drawText (word, slot.withTrimmedLeft (16.0f), juce::Justification::centredLeft, false);
+    }
+
+    const auto keyFont = captionFont().withHeight (9.5f);
+    const auto valueFontMono = theme::monoFont (12.5f);
+    float x = inner.getX();
+
+    for (const auto& [key, value] : displayFields (processor))
+    {
+        x += 12.0f;
+        const float keyWidth = (float) textWidth (keyFont, key);
+        const float valueWidth = (float) textWidth (valueFontMono, value);
+
+        if (x + keyWidth + 6.0f + valueWidth > inner.getRight())
+            break;
+
+        g.setFont (keyFont);
+        g.setColour (theme::lcdDim);
+        g.drawText (key, juce::Rectangle<float> (x, area.getY(), keyWidth + 2.0f, area.getHeight()),
+                    juce::Justification::centredLeft, false);
+        x += keyWidth + 6.0f;
+
+        g.setFont (valueFontMono);
+        g.setColour (theme::lcdInk);
+        g.drawText (value, juce::Rectangle<float> (x, area.getY(), valueWidth + 2.0f, area.getHeight()),
+                    juce::Justification::centredLeft, false);
+        x += valueWidth + 12.0f;
+
+        g.setColour (juce::Colours::white.withAlpha (0.08f));
+        g.fillRect (juce::Rectangle<float> (x, area.getY() + 9.0f, 1.0f, area.getHeight() - 18.0f));
+    }
 }

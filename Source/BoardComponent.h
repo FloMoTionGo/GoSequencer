@@ -23,6 +23,13 @@ namespace theme
     inline juce::Colour accent     { 0xffc85a3c };
     inline juce::Colour error      { 0xffd6412f };   //  a refused move
 
+    //  the faceplate: the display in the top bar, and the recessed well that
+    //  frames a read-out (the game record's title, a knob's face)
+    inline juce::Colour lcd        { 0xff2b2924 };
+    inline juce::Colour lcdInk     { 0xfff1e9d8 };
+    inline juce::Colour lcdDim     { 0xffa79d89 };
+    inline juce::Colour well       { 0xfff4eee2 };
+
     //  the stones keep their colour in both schemes: black is always the dark
     //  one, white the light one, whatever the panel behind them does. Black
     //  sits below the charcoal panel so it still reads as a filled disc there.
@@ -48,6 +55,10 @@ namespace theme
             gridLine   = juce::Colour (0xff5c5544);
             accent     = juce::Colour (0xffe0754f);
             error      = juce::Colour (0xffe8604a);
+            lcd        = juce::Colour (0xff1c1a16);
+            lcdInk     = juce::Colour (0xfff2ecdd);
+            lcdDim     = juce::Colour (0xff756e5c);
+            well       = juce::Colour (0xff2f2c26);
         }
         else
         {
@@ -60,6 +71,10 @@ namespace theme
             gridLine   = juce::Colour (0xffc2b59c);
             accent     = juce::Colour (0xffc85a3c);
             error      = juce::Colour (0xffd6412f);
+            lcd        = juce::Colour (0xff2b2924);
+            lcdInk     = juce::Colour (0xfff1e9d8);
+            lcdDim     = juce::Colour (0xffa79d89);
+            well       = juce::Colour (0xfff4eee2);
         }
     }
 
@@ -71,6 +86,17 @@ namespace theme
         return juce::Font (juce::FontOptions ("Segoe UI", height, styleFlags).withKerningFactor (tracking));
        #else
         return juce::Font (juce::FontOptions (height, styleFlags).withKerningFactor (tracking));
+       #endif
+    }
+
+    /** The display's figures: fixed width, so a count ticking over does not
+        shuffle everything after it along. */
+    inline juce::Font monoFont (float height)
+    {
+       #if JUCE_WINDOWS
+        return juce::Font (juce::FontOptions ("Consolas", height, juce::Font::plain));
+       #else
+        return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), height, juce::Font::plain));
        #endif
     }
 }

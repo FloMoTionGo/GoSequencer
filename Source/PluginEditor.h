@@ -3,16 +3,19 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <array>
+#include <atomic>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 #include "BoardComponent.h"
 #include "PluginProcessor.h"
 
 //==============================================================================
-/** Hairline dropdowns, thin tracks, and switches that are only an outline until
-    they are on - then they fill with the accent, the one place anything does. */
+/** Hairline dropdowns, small knobs, LED switches and buttons that are only an
+    outline - the accent is spent on state alone: an LED that is on, the
+    playhead. */
 class GoLookAndFeel final : public juce::LookAndFeel_V4
 {
 public:
@@ -37,6 +40,9 @@ public:
     void drawLinearSlider (juce::Graphics&, int x, int y, int width, int height,
                            float sliderPos, float minSliderPos, float maxSliderPos,
                            juce::Slider::SliderStyle, juce::Slider&) override;
+    void drawRotarySlider (juce::Graphics&, int x, int y, int width, int height,
+                           float sliderPosProportional, float rotaryStartAngle, float rotaryEndAngle,
+                           juce::Slider&) override;
     int getSliderThumbRadius (juce::Slider&) override;
     juce::Slider::SliderLayout getSliderLayout (juce::Slider&) override;
     juce::Label* createSliderTextBox (juce::Slider&) override;
@@ -60,16 +66,116 @@ public:
 };
 
 //==============================================================================
+/** A knob, or a channel cell, whose value can be typed: click the value under
+    it, type, press Enter.
+
+    `parse` turns the text into a value in the parameter's own units, or into
+    nothing when it is not a value - and then the knob keeps what it had rather
+    than jumping to its minimum, which is what a slider does by default. Text
+    outside the range is clamped, and `onNote` says so. */
+class Knob final : public juce::Slider
+{
+public:
+    std::function<std::optional<double> (const juce::String&)> parse;
+    std::function<void (const juce::String&)> onNote;
+
+    double getValueFromText (const juce::String& text) override;
+};
+
+//==============================================================================
+/** A row of choices, all visible, one click each - for a parameter with only a
+    few of them, where a dropdown would hide the rest. Each segment carries the
+    value it stands for, so the order on screen need not be the parameter's
+    (the board sizes read 8 9 13 19, while the parameter keeps its append-only
+    order). */
+class SegmentedChoice final : public juce::Component
+{
+public:
+    struct Item
+    {
+        juce::String text;
+        int value = 0;
+    };
+
+    void setItems (std::vector<Item>);
+    void setSelectedValue (int value);
+    int getSelectedValue() const noexcept { return selected; }
+
+    /** Called with a segment's value when it is clicked. */
+    std::function<void (int value)> onSelect;
+
+    /** Draws a small picture above the text, in the colour already set. */
+    std::function<void (juce::Graphics&, juce::Rectangle<float>, int value)> drawIcon;
+
+    void paint (juce::Graphics&) override;
+    void mouseDown (const juce::MouseEvent&) override;
+    void mouseMove (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+
+private:
+    int itemAt (juce::Point<int>) const;
+
+    std::vector<Item> items;
+    int selected = -1;
+    int hover = -1;
+};
+
+//==============================================================================
+/** A lamp per voice - black, white and the nine heads - that lights when that
+    voice plays a note, with its MIDI channel under it. Read from the processor's
+    lock-free surface on its own timer: a head that has moved onto a live stone
+    has just played it. A note shorter than a tick can be missed; for a lamp
+    that is fine. */
+class ActivityLamps final : public juce::Component,
+                            private juce::Timer
+{
+public:
+    explicit ActivityLamps (GoSequencerProcessor&);
+
+    void paint (juce::Graphics&) override;
+
+private:
+    void timerCallback() override;
+
+    static constexpr int voices = 2 + GoSequencerProcessor::maxHeadChannels;
+
+    bool inUse (int voice) const noexcept;
+    int channelOf (int voice) const noexcept;
+
+    GoSequencerProcessor& processor;
+    std::array<std::atomic<float>*, (size_t) voices> channels {};
+    std::array<float, (size_t) voices> level {};
+    std::array<int, (size_t) voices> lastPosition {};
+    std::array<int, (size_t) voices> shownChannel {};
+    int shownHeads = -1;
+};
+
+//==============================================================================
 /** A drawing of a Launchpad X with what each button round its edge does here.
     Novation printed its own names on those buttons, and none of them is what
-    the button does in this plugin, so the Pads tab draws the device and writes
-    the real job beside each one. It only draws: clicks go straight through. */
+    the button does in this plugin, so the Pads section draws the device and
+    writes the real job beside each one. It only draws: clicks go straight
+    through. */
 class LaunchpadDiagram final : public juce::Component
 {
 public:
     LaunchpadDiagram() { setInterceptsMouseClicks (false, false); }
 
     void paint (juce::Graphics&) override;
+};
+
+//==============================================================================
+/** The faceplate every control sits on. It is laid out once, at 1200 x 720, and
+    the window scales it as a whole - so a resize never re-flows anything, and
+    every knob keeps its place. */
+class Faceplate final : public juce::Component
+{
+public:
+    static constexpr int width = 1200, height = 720;
+
+    std::function<void (juce::Graphics&)> painter;
+
+    void paint (juce::Graphics& g) override { if (painter != nullptr) painter (g); }
 };
 
 //==============================================================================
@@ -91,110 +197,133 @@ public:
 
 private:
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
-    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
-    /** The tabs the controls are split across. `pinned` is not a tab: it marks
-        the controls that stay beside the board whichever tab is open. */
-    //  The open tab is saved as its number, so a new tab goes on the end.
-    enum Tab { pinned = -1, sequencerTab, boardTab, channelsTab, gameTab, aiTab, padsTab, tabCount };
+    /** The two faces of the panel. PLAY holds what is played with - clock,
+        voice, the game record, the players; PATCH what is set up once - the
+        channels, the MIDI out port, the rules, the Launchpad. `pinned` is not a
+        face: the board, its two switches and the top bar stay on both. */
+    //  The open face is saved as its number (panelFace), so a new one goes on the end.
+    enum Face { pinned = -1, playFace, patchFace, faceCount };
 
     void timerCallback() override;
 
-    /** Adds a control to the editor as a member of one tab (hidden until that
-        tab is shown), or visible for good when it is pinned. */
-    void addToTab (Tab, juce::Component&);
-    void showTab (int tab);
+    /** Adds a control to the faceplate as a member of one face (hidden until
+        that face is shown), or visible for good when it is pinned. */
+    void addToFace (Face, juce::Component&);
+    void showFace (int face);
 
-    void setUpCaption (Tab, juce::Label&, const juce::String& text);
-    void setUpText (Tab, juce::Label&, juce::Justification);
-    void setUpSlider (Tab, juce::Slider&, juce::Label&, const juce::String& caption,
-                      const juce::String& parameterID, std::unique_ptr<SliderAttachment>&,
-                      int valueWidth = 72);
-    void setUpCombo (Tab, juce::ComboBox&, juce::Label&, const juce::String& caption,
-                     const juce::StringArray& items, const juce::String& parameterID,
-                     std::unique_ptr<ComboBoxAttachment>&);
-    void setUpToggle (Tab, juce::TextButton&, const juce::String& caption,
-                      const juce::String& parameterID, std::unique_ptr<ButtonAttachment>&);
-    void setUpButton (Tab, juce::TextButton&, const juce::String& caption, std::function<void()> onClick);
+    void setUpCaption (Face, juce::Label&, const juce::String& text);
+    void setUpText (Face, juce::Label&, juce::Justification);
+    void setUpKnob (Face, Knob&, juce::Label& caption, const juce::String& text, const juce::String& parameterID,
+                    std::unique_ptr<SliderAttachment>&, std::function<std::optional<double> (const juce::String&)> parse);
+    void setUpCell (Knob&, juce::Label& caption, const juce::String& text, const juce::String& parameterID,
+                    std::unique_ptr<SliderAttachment>&);
+    void setUpSegments (Face, SegmentedChoice&, std::vector<SegmentedChoice::Item>, const juce::String& parameterID,
+                        std::unique_ptr<juce::ParameterAttachment>&);
+    void setUpLed (Face, juce::TextButton&, const juce::String& caption,
+                   const juce::String& parameterID, std::unique_ptr<ButtonAttachment>&);
+    void setUpButton (Face, juce::TextButton&, const juce::String& caption, std::function<void()> onClick);
 
     void openSgfChooser();
     void loadSgfFile (const juce::File&);
     void showMessage (const juce::String&);
     void refreshGameDisplay();
 
-    /** The header's status text: step, mode, captures, record position, transport. */
-    juce::String statusLine() const;
+    /** Greys out what the mode is not using and rewrites the lines that explain
+        it - re-read whenever the mode or the board size changes. */
+    void refreshModeDisplay();
 
-    /** The always-visible light/dark switch, top right of the header. */
+    /** The light/dark switch, top right. */
     void setDarkMode (bool dark);
+
+    /** Everything drawn on the plate itself: the top bar and its display, the
+        engraved section frames, the screws. */
+    void paintPlate (juce::Graphics&);
+    void paintDisplay (juce::Graphics&, juce::Rectangle<float>);
 
     GoSequencerProcessor& processor;
     GoLookAndFeel lookAndFeel;
+    Faceplate plate;
     BoardComponent board;
 
-    std::array<juce::TextButton, (size_t) tabCount> tabButtons;
-    std::array<std::vector<juce::Component*>, (size_t) tabCount> tabMembers;
-    int currentTab = sequencerTab;
+    std::array<std::vector<juce::Component*>, (size_t) faceCount> faceMembers;
+    int currentFace = playFace;
 
-    //  always visible, whichever tab is open - not itself a tab member
+    /** A frame drawn round a group of controls, with its name cut into the
+        top edge. */
+    struct Section
+    {
+        juce::Rectangle<int> bounds;
+        juce::String title;
+        int face;
+    };
+
+    std::vector<Section> sections;
+    juce::Rectangle<int> displayBounds, topBarBounds, gameWellBounds;
+    int playersRuleY = 0;
+
+    //  always visible, whichever face is open - not face members
+    SegmentedChoice faceSwitch;
     juce::TextButton darkModeButton;
 
     //  captions and text labels coloured theme::dimText at setup time; the
     //  colour is a copy, so a scheme change has to walk this list and re-set it
     std::vector<juce::Label*> dimLabels;
 
-    juce::ComboBox rateBox, colourBox, sizeBox, gameRateBox, modeBox, lifeModeBox, aiPlayersBox,
-                   aiOpponentBox;
-    juce::Slider noteSlider, gateSlider, tempoSlider,
-                 blackVelocitySlider, whiteVelocitySlider,
-                 spreadSlider, lifeSlider,
-                 blackChannelSlider, whiteChannelSlider,
-                 moveSlider, waveGapSlider,
-                 aiMovesSlider, aiVariationSlider, aiSeedSlider;
+    //  ---- knobs, and the captions over them
+    Knob rateKnob, tempoKnob, noteKnob, gateKnob, lifeKnob, spreadKnob,
+         blackVelocityKnob, whiteVelocityKnob, gameRateKnob, waveGapKnob,
+         aiMovesKnob, aiVariationKnob, aiSeedKnob;
+    juce::Label rateCaption, tempoCaption, noteCaption, gateCaption, lifeCaption, spreadCaption,
+                blackVelocityCaption, whiteVelocityCaption, gameRateCaption, waveGapCaption,
+                aiMovesCaption, aiVariationCaption, aiSeedCaption;
+    std::unique_ptr<SliderAttachment> rateAttachment, tempoAttachment, noteAttachment, gateAttachment,
+                                      lifeAttachment, spreadAttachment, blackVelocityAttachment,
+                                      whiteVelocityAttachment, gameRateAttachment, waveGapAttachment,
+                                      aiMovesAttachment, aiVariationAttachment, aiSeedAttachment;
 
-    //  one slider per playhead: assigned, never offset from a base
+    //  ---- the patch bay: one cell per voice - black, white, the nine heads -
+    //  each its MIDI channel, set outright rather than offset from a base
     static constexpr int headChannels = GoSequencerProcessor::maxHeadChannels;
-    std::array<juce::Slider, (size_t) headChannels> headChannelSliders;
-    std::array<juce::Label,  (size_t) headChannels> headChannelCaptions;
-    juce::TextButton freeRunButton, tieNotesButton, koButton, selfCaptureButton, clearButton,
-                     loadButton, runGameButton, loopGameButton, unloadButton,
-                     previousMoveButton, nextMoveButton, waveReplayButton,
-                     aiPlayButton, openingFromBoardButton, openingBookButton,
-                     aiOpponentButton, passButton, newMatchButton;
-
-    juce::Label rateCaption, noteCaption, gateCaption, tempoCaption,
-                blackVelocityCaption, whiteVelocityCaption,
-                blackChannelCaption, whiteChannelCaption,
-                modeCaption, spreadCaption, lifeCaption, lifeModeCaption,
-                colourCaption, sizeCaption, gameRateCaption, moveCaption, waveGapCaption,
-                aiPlayersCaption, aiMovesCaption, aiVariationCaption, aiSeedCaption, openingCaption,
-                aiOpponentCaption;
-    juce::Label hintLabel, gameTitleLabel, gameDetailLabel, openingLabel, matchLabel;
-
-    std::unique_ptr<SliderAttachment>   noteAttachment, gateAttachment, tempoAttachment,
-                                        blackVelocityAttachment, whiteVelocityAttachment,
-                                        spreadAttachment, lifeAttachment,
-                                        blackChannelAttachment, whiteChannelAttachment,
-                                        waveGapAttachment,
-                                        aiMovesAttachment, aiVariationAttachment, aiSeedAttachment;
+    Knob blackChannelCell, whiteChannelCell;
+    std::array<Knob, (size_t) headChannels> headChannelCells;
+    juce::Label blackChannelCaption, whiteChannelCaption;
+    std::array<juce::Label, (size_t) headChannels> headChannelCaptions;
+    std::unique_ptr<SliderAttachment> blackChannelAttachment, whiteChannelAttachment;
     std::array<std::unique_ptr<SliderAttachment>, (size_t) headChannels> headChannelAttachments;
-    std::unique_ptr<ComboBoxAttachment> rateAttachment, colourAttachment, sizeAttachment, gameRateAttachment,
-                                        modeAttachment, lifeModeAttachment, aiPlayersAttachment,
-                                        aiOpponentColourAttachment;
-    std::unique_ptr<ButtonAttachment>   freeRunAttachment, tieNotesAttachment, koAttachment, selfCaptureAttachment,
-                                        runGameAttachment, loopGameAttachment, waveReplayAttachment,
-                                        aiPlayAttachment, aiOpponentAttachment;
+
+    //  ---- segment switches
+    SegmentedChoice modeSwitch, sizeSwitch, placeSwitch, lifeModeSwitch, playersSwitch, opponentSwitch;
+    std::unique_ptr<juce::ParameterAttachment> modeAttachment, sizeAttachment, placeAttachment,
+                                               lifeModeAttachment, playersAttachment, opponentAttachment;
+
+    //  ---- LED switches and buttons
+    juce::TextButton freeRunButton, tieNotesButton, koButton, selfCaptureButton,
+                     runGameButton, loopGameButton, waveReplayButton, aiPlayButton, aiOpponentButton;
+    std::unique_ptr<ButtonAttachment> freeRunAttachment, tieNotesAttachment, koAttachment, selfCaptureAttachment,
+                                      runGameAttachment, loopGameAttachment, waveReplayAttachment,
+                                      aiPlayAttachment, aiOpponentAttachment;
+
+    juce::TextButton clearButton, loadButton, unloadButton, previousMoveButton, nextMoveButton,
+                     openingFromBoardButton, openingBookButton, passButton, newMatchButton;
+
+    juce::Slider moveSlider;
+    ActivityLamps activity;
+
+    juce::Label sizeCaption, placeCaption, lifeModeCaption, openingCaption, opponentCaption,
+                routingCaption, moveCaption;
+    juce::Label hintLabel, gameTitleLabel, gameDetailLabel, openingLabel, matchLabel,
+                activityLabel, lapLabel, routingLabel, rulesLabel;
 
     std::unique_ptr<juce::FileChooser> fileChooser;
     juce::File lastSgfDirectory;
 
-    juce::Rectangle<int> headerBounds;
     juce::String message;
     int messageCountdown = 0;
     int lastMoveShown = -1;
     juce::String lastHeaderShown;
-    int lastModeShown = -1;
+    int lastModeKeyShown = -1;
     bool lastWaveReplayShown = false;
     bool dragHighlight = false;
 
@@ -223,7 +352,7 @@ private:
     void refreshPortStatus();
 
     RefreshingComboBox portBox;
-    juce::Label portCaption, portStatusLabel;
+    juce::Label portStatusLabel;
     juce::StringArray portItems;        //  item id i + 2 is portItems[i]; id 1 is Off
     bool lastPortOpenShown = false;
 

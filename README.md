@@ -16,7 +16,7 @@ overview.
 
 > **Credit — Leela.** The *reading* self-play players are built on the tactical
 > ideas of [**Leela**](https://github.com/gcp/Leela), the Go engine by
-> Gian-Carlo Pascutto (MIT licence). Despite the "AI" on the tab, they are plain
+> Gian-Carlo Pascutto (MIT licence). Despite the "AI" on the panel, they are plain
 > algorithms with fixed weights: no neural network, no machine-learning model,
 > no training data, and nothing that learns while the plugin runs. See
 > [Where the reading players come from](#where-the-reading-players-come-from-leela).
@@ -174,7 +174,7 @@ It is saved with the session, and it belongs to the board it was played on: a
 and both keep their temperaments: Kuro plays territorially — keeps its stones
 safe and connected, takes the third line, fights when there is something to
 take — while Shiro fights: ataris, cuts and contact are worth more to it than
-shape. **Players** on the AI tab picks which generation writes the games:
+shape. **Players** (PLAY face, Players section) picks which generation writes the games:
 
 - **Reading** (the default for a new instance) — before choosing, they read the
   board as chains of stones: what a move captures or saves, which self-atari is
@@ -273,7 +273,7 @@ games. They take far more work than a sequencer should spend between two notes,
 and they rest on floating point and learned data that could not keep the
 promise that a seed names the same game on every machine.
 
-**No AI, no training.** The "AI" on the tab means that the plugin plays both
+**No AI, no training.** The "AI" on the panel means that the plugin plays both
 sides of a game by itself. It does not mean artificial intelligence in the
 machine-learning sense, and neither pair of players uses any. They are
 algorithms: each legal point gets a score from rules like the ones above, the
@@ -345,7 +345,7 @@ every machine.
 
 ## Playing against the AI
 
-Switch on **Play against** on the AI tab and the same players answer your
+Switch on **Play against** in the Players section and the same players answer your
 moves one at a time instead of writing whole games; **They play** picks their
 colour. Their answer lands as soon as you place a stone. **Pass** and **New
 game** do what they say, and two passes in a row end the game. Stones can't be
@@ -385,7 +385,7 @@ Sequencer can send its notes to a port as well as to the host:
    needs it.
 2. In Live's *Preferences → Link, Tempo & MIDI*, turn **Track** on for the
    `GoSeq` **input**.
-3. On Go Sequencer's **Channels** tab, set **MIDI out port** to `GoSeq`.
+3. On Go Sequencer's **PATCH** face, set **MIDI out port** to `GoSeq`.
 4. For each channel, make a MIDI track with **MIDI From** → `GoSeq` →
    **Ch. N** and Monitor **In**. Put the instrument on that track, or set
    **MIDI To** to a multitimbral instrument's track and pick the channel.
@@ -408,7 +408,7 @@ when it lets go.
 1. In Live's *Settings → Link, Tempo & MIDI*, set the Launchpad X control
    surface to *None* and switch Track, Sync and Remote off for the Launchpad's
    ports, so Live leaves the device to Go Sequencer.
-2. On Go Sequencer's **Pads** tab, press **Find Launchpad**. On Windows it picks
+2. On Go Sequencer's **PATCH** face, Launchpad X section, press **Find Launchpad**. On Windows it picks
    `MIDIIN2` / `MIDIOUT2 (LPX MIDI)` — the plain `LPX MIDI` listed beside them is
    the DAW port, which the pads don't use. The board becomes 8×8 — straight away
    if it's empty, otherwise when you press **Use 8 x 8**.
