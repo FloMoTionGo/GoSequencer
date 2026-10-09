@@ -179,12 +179,30 @@ component laid out once at **1200 x 720** and scaled as a whole by `setTransform
   flip visibility; pinned = the top bar, the board and its strip. The face is saved as a raw int
   (`panelFace`) → **append new faces at the end**. Section frames, the display (LCD), the wordmark
   and the screws are *painted* by `paintPlate` from the `sections` list `resized()` builds.
-- Controls: `Knob` (a `Slider` - rotary, or `LinearBarVertical` for a patch-bay cell) whose
+- **v3 layout** (branch `ui-faceplate-v3`, 2026-10-09, from the Claude Design canvas
+  `75m6Ai6A9vprZceoZC5QG3`; its source is `mock/preview-v3/`). PLAY left: PLAYHEADS (walk, rate,
+  tempo, free run, lap line) / VOICE (pitch | length | velocity columns) / OUTPUT (lamp + channel
+  cell per voice). PLAY right: RECORD / AI PLAYERS / STONE LIFE. Pinned under the board: board +
+  place strip, then RULES (ko, self capture) + hint. PATCH: MIDI OUT (port, status, `RoutingTable`)
+  and LAUNCHPAD X. Sections carry a title (left) and a job (right) cut into the frame. Whose move
+  it is in a match shows in the LCD (`MATCH` field); the opening's state only via messages.
+- **Fonts are CSS px.** `theme::font` sets the *point* height (em size), so sizes and
+  letter-spacing are copied 1:1 from the web mock's CSS. JUCE's own height is ~1.33x that for
+  Segoe UI - do not mix `Font::withHeight` back in.
+- Controls: `Knob` (a `Slider` - rotary, or `LinearBarVertical` for a channel cell) whose
   `getValueFromText` runs a `parse` function from `ValueText.h` and **keeps the old value** for
   text that is no value (JUCE's default would read it as the minimum). `SegmentedChoice` for
-  choice parameters with few items, bound by `juce::ParameterAttachment`; each segment carries the
-  parameter **index**, so the order on screen may differ (board sizes show 8 9 13 19). LEDs are
-  `TextButton`s with the `goLed` property. Builders: `setUpKnob/Cell/Segments/Led/Button/Caption/Text`.
+  choice parameters with few items (horizontal or `setVertical`), bound by
+  `juce::ParameterAttachment`; each segment carries the parameter **index**, so the order on screen
+  may differ (board sizes show 8 9 13 19, they-play shows ● before ○). Toggle switches are
+  `TextButton`s with the `goSwitch` property: `"cell"` (knob-sized: name, 42x24 track, ON/OFF) or
+  `"inline"` (track + name). A knob with nothing to do is faded with its caption by `muteKnob`
+  (alpha 0.38), not drawn dim by the look-and-feel. Unused channel cells fade to 0.3 but stay
+  settable. Builders: `setUpKnob/Cell/Segments/Switch/Button/Caption/Text`.
+- A `textFromValueFunction` set on a knob must come **after** its `SliderAttachment`, which writes
+  its own (the AI length and variation readouts do this; the host keeps the parameter's text).
+- Labels from `setUpText` have `setMinimumHorizontalScale (1.0f)`: JUCE otherwise squashes text
+  up to 143 % too wide onto one line instead of wrapping it.
 - The parameters themselves carry `withValueFromStringFunction` (same parsers), so the host's own
   text entry understands `C3`, `50%`, `hold`, `+7` too.
 - `ActivityLamps` polls the lock-free read surface on its own 30 Hz timer: a head that moved onto a
@@ -194,7 +212,8 @@ component laid out once at **1200 x 720** and scaled as a whole by `setTransform
 - `LaunchpadDiagram` is a static legend: the 16 edge-button jobs written across the pads (top row
   on the left half with its button's mark, each side button's job in its own row), pads faint.
 - Throwaway render/typed-value harness: `build/snap/` (gitignored), a JUCE console app that writes
-  `shots/*.png` per face and scheme and types into the real value boxes.
+  `shots/*.png` per face and scheme (plus `edge-*`: nine rings with a missing port, a spiral with
+  no record) and types into the real value boxes. It finds controls by **title** - keep them.
 - Timers: editor 20 Hz, `BoardComponent` 30 Hz (`BoardComponent::timerCallback`). Nothing pushes;
   everything polls - and repaints only what changed: the editor header only when its text or the
   next-stone colour reads differently.
@@ -207,8 +226,9 @@ component laid out once at **1200 x 720** and scaled as a whole by `setTransform
   Anything new drawn on a point must fit `cellBounds` and be part of `cellState`, or it will not be
   repainted. There is no "Show path" any more - removed for performance (2026-09-17).
 - `RefreshingComboBox` (`PluginEditor.h:48-60`) re-reads a device list when its popup opens.
-- **All colours** live in `namespace theme` (`BoardComponent.h:11-76`), light and dark.
-  `stoneBlack`/`stoneWhite` are `const` and fixed in both schemes.
+- **All colours** live in `namespace theme` (`BoardComponent.h`), light and dark (v3's darker
+  dark: plate `#151411`). `stoneBlack`/`stoneWhite` are `const` and fixed in both schemes; their
+  edges are `stoneEdge` / `blackEdge` (transparent on light).
 
 ---
 
@@ -246,8 +266,8 @@ generator, not an insert. Device-level input goes through `juce::MidiInput`, not
 
 ## Known traps
 
-- **The docs contradict the code on pitch.** `README.md:51-52,92` and `GoAI.h:38-39` say board
-  position picks the pitch. It does not. `fireCell` uses `noteParam + head*spread` only
+- **Pitch does not follow board position**, whatever `GoAI.h:38-39` says (README and
+  how-to-use-it.md were corrected on 2026-10-09; the old wording said it did). `fireCell` uses `noteParam + head*spread` only
   (`cpp:1197`, `:1300-1303`) — every stone in a given playhead plays the same note. Board position
   decides *when* a note fires, colour decides channel and velocity.
 - **A fresh clone cannot configure.** `CMakeLists.txt:84` references `tools/GoAiDump.cpp` but
@@ -264,7 +284,7 @@ generator, not an insert. Device-level input goes through `juce::MidiInput`, not
   (`PluginProcessor.h:223-231`).
 - **Windows names the Launchpad's DAW interface a bare `LPX MIDI`**, listed above
   `MIDIIN2`/`MIDIOUT2 (LPX MIDI)` — the pair the grid uses. Match the prefix
-  (`LaunchpadSurface::findLaunchpad`); the Pads status line flags the bare one.
+  (`LaunchpadSurface::findLaunchpad`); the LAUNCHPAD X status line flags the bare one.
 - **Port exclusivity is not reliable either way.** Legacy WinMM gives a port to one app; Windows
   MIDI Services here let a second app open the Launchpad. Handle `openDevice` returning `nullptr`,
   but don't depend on it happening.
@@ -288,16 +308,17 @@ Approved plan at `C:\Users\flori\.claude\plans\valiant-booping-valley.md`.
   single stone funnel; `placeStone` refuses on their turn; reply via `pendingOpponentReply` →
   `playOpponentReply`; `passMove`, `newMatch`; turn = `nextAlternating`; `matchPasses` saved as an XML
   attribute; restore takes the switch up directly so the listener cannot clear a restored board.
-  AI-tab controls, and the board view refuses erases mid-game.
+  AI PLAYERS controls, and the board view refuses erases mid-game.
 - `Source/LaunchpadSurface.*`: written, compiled, owned by the processor as `pads` (declared last, so
   destroyed first); ports persist as `launchpadIn` / `launchpadOut`; full edge-button map.
 - Protocol note checked against Novation's manual.
 
-- Editor "Pads" tab (`padsTab`, appended): in/out `RefreshingComboBox`es, Find Launchpad, Use 8 x 8,
+- Editor Launchpad controls (once a "Pads" tab; now the PATCH face's LAUNCHPAD X section): in/out
+  `RefreshingComboBox`es (boxed, over the left half of `LaunchpadDiagram`), Find Launchpad, Use 8 x 8,
   Stop, status line, legend of the edge buttons. Choosing ports switches to 8×8 only when
   `boardHasSomethingToLose()` is false, else waits for Use 8 x 8 — no modal dialogs, which hosts
   handle badly. Status is polled in `timerCallback`, never pushed (`onStatusChanged` is unused: the
-  editor can die while the surface lives). The tab-strip gap shrinks so six tabs fit at 780 px.
+  editor can die while the surface lives).
 - User docs: `how-to-use-it.md` §6 "Playing against the AI" and §11 "The Launchpad X"; README.
 
 **Hardware:** confirmed working on the user's Launchpad X (2026-09-17), after the port-pick,

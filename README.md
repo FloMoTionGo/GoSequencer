@@ -14,6 +14,8 @@ For a complete, tutorial-style walkthrough of every control and behaviour,
 see **[how-to-use-it.md](how-to-use-it.md)**. This README is the quick
 overview.
 
+![The faceplate, PLAY face, dark scheme](docs/faceplate/play-dark.png)
+
 > **Credit — Leela.** The *reading* self-play players are built on the tactical
 > ideas of [**Leela**](https://github.com/gcp/Leela), the Go engine by
 > Gian-Carlo Pascutto (MIT licence). Despite the "AI" on the panel, they are plain
@@ -33,7 +35,7 @@ overview.
 - [How it works](#how-it-works)
 - [Playhead modes](#playhead-modes)
 - [Stone lifespan](#stone-lifespan)
-- [Controls](#controls)
+- [The faceplate and its controls](#the-faceplate-and-its-controls)
 - [Loading a game record (SGF)](#loading-a-game-record-sgf)
 - [AI self-play](#ai-self-play)
 - [Where the reading players come from (Leela)](#where-the-reading-players-come-from-leela)
@@ -58,13 +60,15 @@ understanding Go, though; you can just click points and listen.
 
 One or more **playheads** step around the board on the sequencer's clock.
 Whenever a playhead lands on a point holding a stone, that stone fires a MIDI
-note — its column and row pick the pitch region, its colour (black/white) or
-its playhead picks the MIDI channel, and how long it's been on the board
-decides whether it's still allowed to sound at all.
+note. Where the stone stands decides *when* it plays; the pitch is the **Note**
+knob, moved by **Spread** for each playhead after the first. Its colour
+(black/white) or its playhead picks the MIDI channel, its colour the velocity,
+and how long it's been on the board decides whether it's still allowed to
+sound at all.
 
 ## Playhead modes
 
-Set with the **Mode** control:
+Set with **Walk** (PLAY face, PLAYHEADS section):
 
 | Mode | Playheads | Path |
 |---|---|---|
@@ -90,47 +94,74 @@ Changing the lifespan slider while the sequencer runs re-evaluates every
 stone against the age it's already reached (some go silent, some come back)
 rather than resetting the whole board's clock.
 
-## Controls
+## The faceplate and its controls
 
-| Control | What it does |
-|---|---|
-| **Board** | 9×9, 13×13, 19×19 or 8×8 (the size of a Launchpad X's grid). Changing it clears the board. |
-| **Mode** | Spiral / Polyrhythm / Quads out / Quads in — see above. |
-| **Place** | Alternate / Black / White — who a click plays next. |
-| **Rate** | Step clock rate, synced to host tempo (1/1 down to 1/32T). |
-| **Free Run** + **Free Tempo** | Run the step clock at its own BPM instead of following the host transport. |
-| **Note** | Base pitch; board position offsets from here. |
-| **Gate** | Note length as a percentage of one step. |
-| **Black/White Channel** | MIDI channel per colour (Spiral mode). |
-| **Head 1–9 Channel** | MIDI channel per playhead (multi-head modes). |
-| **MIDI out port** | Also sends every note to a MIDI port of your system, channels intact, so each channel can go to its own track in Live. *Off* by default; needs [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) on Windows — see [below](#one-track-per-channel-the-midi-out-port-needs-loopmidi). |
-| **Black/White Velocity** | Fixed velocity per colour. |
-| **Spread** | Semitone transpose per ring (Polyrhythm). |
-| **Stone Life** / **Life Counts** | See [Stone lifespan](#stone-lifespan). |
-| **AI Self-Play** | Two built-in players write the record instead of loading one — see below. |
-| **Players** | *Reading* (the default) or *Classic* — which generation of the two players writes the games. |
-| **Game Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
-| **From board** / **Use book** | Take the ten stones you played as the opening every game starts from, or go back to the built-in one. |
-| **Play against** / **They play** | The players answer your moves one at a time instead of writing whole games; choose their colour. **Pass** and **New game** go with it. |
-| **Launchpad in** / **out** | Drive a Launchpad X, whose pads show and play the board. **Find Launchpad** picks both ports — see [Launchpad X](#launchpad-x). |
-| **Ko Rule** | Forbid immediately recapturing the previous position. |
-| **Self Capture** | Allow suicide moves (a group played with zero liberties is removed instead of refused). |
+The window is one faceplate with two faces, switched with **PLAY / PATCH** in
+the top bar: **PLAY** holds what you play with, **PATCH** what you set up once.
+The top bar, the board and the two strips under the board stay where they are
+on both; only the two side rails change. **Dark** switches between the
+near-black and the cream scheme. The face and the scheme are saved with the
+session, and the window scales as a whole (drag its corner), so nothing ever
+moves around.
+
+The **display** in the top bar reads the step, the mode, where the stones come
+from (*hand*, *record*, *AI game N* — or, in a game against the players, whose
+move it is), the record's move and the captures, with *running* / *stopped* at
+its right. When something needs saying — a refused move, a loaded file — a
+message takes its place for a few seconds.
+
+Every value under a knob, and every channel cell, can be **clicked and typed
+into**: `C3` or `60` for a note, `50%` or `0.5` for the gate, `hold` for stone
+life, `+7` for spread, `1/8T` for the step rate. Text that is no value is
+refused and the knob keeps what it had.
+
+| Where | Control | What it does |
+|---|---|---|
+| Under the board | **Board** | 8, 9, 13 or 19 — the board's size (8×8 is the size of a Launchpad X's grid). Changing it clears the board. |
+| | **Place** | Alt / Black / White — who a click plays next. |
+| | **Clear board** | Lifts every stone. A loaded record stays loaded. |
+| | **Rules: Ko rule** | Forbid immediately recapturing the previous position. |
+| | **Rules: Self capture** | Allow suicide moves (a group played with zero liberties is removed instead of refused). |
+| PLAY · PLAYHEADS | **Walk** | Spiral / Polyrhythm / Quads out / Quads in — see above. The line under it says how many heads walk and how long their laps are. |
+| | **Step rate** | Step clock rate, synced to host tempo (1/1 to 1/32, triplets included). |
+| | **Free run** + **Free tempo** | Run the step clock at its own BPM instead of following the host transport. |
+| PLAY · VOICE | **Note** | The pitch every stone plays. |
+| | **Spread** | Semitones between one playhead and the next (multi-head modes; faded in Spiral). |
+| | **Gate** | Note length as a percentage of one step. |
+| | **Tie notes** | A run of same-coloured stones under one playhead plays as one held note, not a note per step. On by default. |
+| | **● black** / **○ white** | Fixed velocity per colour. |
+| PLAY · OUTPUT | **● ○ 1–9** | The MIDI channel of each voice: black and white in Spiral, one per playhead in the multi-head modes. A lamp over each cell lights as that voice plays; the cells the mode doesn't use are faded, and can still be set. |
+| PLAY · RECORD | **Load SGF…** / **Unload** | Load a game record, or let go of it — see [below](#loading-a-game-record-sgf). |
+| | **Move rate** / **Run game** / **Loop** | How fast the record's moves land, and whether it plays and repeats. |
+| | **Position** / **‹ ›** | Where the record stands: drag, type a move number, or step one move. |
+| PLAY · AI PLAYERS | **Self-play** | Two built-in players write the record instead of loading one — see [below](#ai-self-play). |
+| | **Players** | *Reading* (the default) or *Classic* — which generation of the two players writes the games. |
+| | **Length** / **Variation** / **Seed** | How long a generated game runs, how far the players stray from their best move, and which run of games you get. |
+| | **Opening: From board** / **Use book** | Take the ten stones you played as the opening every game starts from, or go back to the built-in one. |
+| | **Play against** / **They play** | The players answer your moves one at a time instead of writing whole games; choose their colour. **Pass** and **New game** go with it. |
+| PLAY · STONE LIFE | **Stone life** / **Life counts** | See [Stone lifespan](#stone-lifespan). |
+| | **Wave replay** / **Wave gap** | A second way to pace a record — see [below](#loading-a-game-record-sgf). |
+| PATCH · MIDI OUT | **Port** | Also sends every note to a MIDI port of your system, channels intact, so each channel can go to its own track in Live. *Off* by default; needs [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html) on Windows — see [below](#one-track-per-channel-the-midi-out-port-needs-loopmidi). A table under it shows which voices go out on which channel, mode by mode. |
+| PATCH · LAUNCHPAD X | **Find Launchpad** / **Stop** / **Use 8 × 8**, **pads in** / **pads out** | Drive a Launchpad X, whose pads show and play the board — see [Launchpad X](#launchpad-x). A drawing of the device shows what each button round its edge does. |
 
 **Clicking the board:** left-click an empty point to place a stone; left-click
 (or right-click / Shift-click / Alt-click) an occupied point to lift it — this
 "eraser" click ignores Go legality, it's just for editing the pattern.
 
+![The PATCH face: MIDI out and the Launchpad X](docs/faceplate/patch-dark.png)
+
 ## Loading a game record (SGF)
 
-Drag an `.sgf` file onto the plugin, or use the **Load** button, to replay a
-real game onto the board:
+Drag an `.sgf` file onto the plugin, or use **Load SGF…** in the RECORD
+section, to replay a real game onto the board:
 
-- The moves play at their own speed (set by **Game Rate**: 1/4 note up to
+- The moves play at their own speed (set by **Move rate**: 1/4 note up to
   "one lap"), independent of the sequencer's step clock — both run at once,
   so the pattern is continuously rewritten by the game as it plays.
-- **Run** / **Loop** start and repeat playback; **‹ ›** step one move at a
-  time; **Unload** clears the record and leaves the board as it stood.
-- **Wave Replay** is a second pacing option: playback never pauses, but
+- **Run game** / **Loop** start and repeat playback; **Position** shows and
+  scrubs where the record stands; **‹ ›** step one move at a time; **Unload**
+  clears the record and leaves the board as it stood.
+- **Wave replay** (STONE LIFE section) is a second pacing option: playback never pauses, but
   every **Wave Gap** moves after a move first landed, whatever's currently
   on that point gets its own lifespan reset — staggered per stone rather
   than a synchronized pulse. With **Loop** on, the record wraps without
@@ -139,11 +170,11 @@ real game onto the board:
 
 ## AI self-play
 
-Turn on **AI self-play** and the plugin writes the record itself: two players
-take the board, game after game, with no file to load and nothing to connect
-to. It is the same machinery as an SGF underneath, so **Move Rate**, **Run**,
-**Loop**, the position slider and the step buttons all keep working exactly as
-they did.
+Turn on **Self-play** (PLAY face, AI PLAYERS section) and the plugin writes
+the record itself: two players take the board, game after game, with no file
+to load and nothing to connect to. It is the same machinery as an SGF
+underneath, so **Move rate**, **Run game**, **Loop**, **Position** and the step
+buttons all keep working exactly as they did. The display reads *AI game N*.
 
 ![Six self-play games, one opening](docs/mockups/self-play-games.png)
 
@@ -174,7 +205,7 @@ It is saved with the session, and it belongs to the board it was played on: a
 and both keep their temperaments: Kuro plays territorially — keeps its stones
 safe and connected, takes the third line, fights when there is something to
 take — while Shiro fights: ataris, cuts and contact are worth more to it than
-shape. **Players** (PLAY face, Players section) picks which generation writes the games:
+shape. **Players** (PLAY face, AI PLAYERS section) picks which generation writes the games:
 
 - **Reading** (the default for a new instance) — before choosing, they read the
   board as chains of stones: what a move captures or saves, which self-atari is
@@ -215,7 +246,7 @@ Measured with an optimised build, a default 60-move game takes about 1 ms
 **The four settings.**
 
 - **Players** — *Reading* or *Classic*, as above.
-- **Game Length** — 12 to 160 moves. The ten book moves are part of it.
+- **Length** — 12 to 160 moves. The ten book moves are part of it.
 - **Variation** — 0% plays the best point it can see every time, so the run is
   one game repeating. 100% picks freely among the best twelve. The default 35%
   keeps the play recognisable and the games different.
@@ -227,10 +258,11 @@ Measured with an optimised build, a default 60-move game takes about 1 ms
 
 All four are read when a game is *written*, so changing one lands on the next
 game rather than cutting the current one short. To restart a run immediately,
-switch AI self-play off and on.
+switch Self-play off and on. With Self-play off, the three knobs and the
+**Players** switch are faded.
 
 Loading an .sgf or pressing **Unload** hands the board back and switches
-self-play off. **Wave Replay** holds a run on one game while it is on — the
+self-play off. **Wave replay** holds a run on one game while it is on — the
 wave is rippling stones the next game would not have played.
 
 **Exporting the games.** `GoAiDump` plays the same players outside the plugin
@@ -345,12 +377,13 @@ every machine.
 
 ## Playing against the AI
 
-Switch on **Play against** in the Players section and the same players answer your
-moves one at a time instead of writing whole games; **They play** picks their
-colour. Their answer lands as soon as you place a stone. **Pass** and **New
-game** do what they say, and two passes in a row end the game. Stones can't be
-lifted during a game, and a game in progress — whose move it is included — is
-saved with the session. More in
+Switch on **Play against** in the AI PLAYERS section and the same players answer your
+moves one at a time instead of writing whole games; **They play** (● or ○)
+picks their colour. Their answer lands as soon as you place a stone, and the
+display's MATCH field says whose move it is. **Pass** and **New game** do what
+they say, and two passes in a row end the game. Stones can't be lifted during
+a game, and a game in progress — whose move it is included — is saved with the
+session. More in
 [how-to-use-it.md](how-to-use-it.md#playing-against-the-ai).
 
 ## Using it in Ableton Live
@@ -385,7 +418,7 @@ Sequencer can send its notes to a port as well as to the host:
    needs it.
 2. In Live's *Preferences → Link, Tempo & MIDI*, turn **Track** on for the
    `GoSeq` **input**.
-3. On Go Sequencer's **PATCH** face, set **MIDI out port** to `GoSeq`.
+3. On Go Sequencer's **PATCH** face, MIDI OUT section, set **Port** to `GoSeq`.
 4. For each channel, make a MIDI track with **MIDI From** → `GoSeq` →
    **Ch. N** and Monitor **In**. Put the instrument on that track, or set
    **MIDI To** to a multitimbral instrument's track and pick the channel.
@@ -408,13 +441,15 @@ when it lets go.
 1. In Live's *Settings → Link, Tempo & MIDI*, set the Launchpad X control
    surface to *None* and switch Track, Sync and Remote off for the Launchpad's
    ports, so Live leaves the device to Go Sequencer.
-2. On Go Sequencer's **PATCH** face, Launchpad X section, press **Find Launchpad**. On Windows it picks
+2. On Go Sequencer's **PATCH** face, LAUNCHPAD X section, press **Find Launchpad**. On Windows it picks
    `MIDIIN2` / `MIDIOUT2 (LPX MIDI)` — the plain `LPX MIDI` listed beside them is
    the DAW port, which the pads don't use. The board becomes 8×8 — straight away
-   if it's empty, otherwise when you press **Use 8 x 8**.
+   if it's empty, otherwise when you press **Use 8 × 8**.
 
-The button map and the rest are in
-[how-to-use-it.md](how-to-use-it.md#11-the-launchpad-x-the-pads-tab).
+The section draws the Launchpad with each edge button's job written by it, and
+the **pads in** / **pads out** dropdowns inside it pick the ports by hand. The
+button map and the rest are in
+[how-to-use-it.md](how-to-use-it.md#11-the-launchpad-x-patch-face).
 
 ## Building it
 
@@ -498,8 +533,9 @@ GoSequencer/
 ├── CMakeLists.txt          # Build configuration (JUCE plugin as VST3 + Standalone, rules tests)
 ├── Source/
 │   ├── PluginProcessor.*   # Audio/MIDI engine: playheads, clock, params
-│   ├── PluginEditor.*      # Plugin UI (sliders, combo boxes, board view)
-│   ├── BoardComponent.*    # The clickable Go board widget
+│   ├── PluginEditor.*      # The faceplate: PLAY and PATCH faces, knobs, switches, display
+│   ├── ValueText.h         # Typed values back into numbers: C3, 50%, hold, +7 (no JUCE)
+│   ├── BoardComponent.*    # The clickable Go board widget, and every colour (theme)
 │   ├── MidiPortOut.*       # The optional MIDI out port: notes to a system port, channels intact
 │   ├── LaunchpadSurface.*  # The Launchpad X: its pads show and play the board
 │   ├── LaunchpadMap.h      # Which pad is which point (no JUCE)
@@ -508,6 +544,7 @@ GoSequencer/
 │   ├── GoTactics.h         # What the reading players read: chains, ladders, eye shapes, areas
 │   └── SgfParser.h         # Minimal SGF (game record) reader
 ├── claude_instructions/    # Architecture notes for AI coding agents, and the Launchpad X protocol
+├── docs/                   # Faceplate screenshots (faceplate/) and board mockups (mockups/)
 ├── sgf/                    # Sample game records for trying SGF playback
 ├── tools/
 │   └── GoAiDump.cpp        # Plays the two players outside the plugin, writes .sgf

@@ -54,7 +54,7 @@ have been verified on hardware.
             ▼                                                 │    renamed; same threads, FIFO, diff,
  BoardFit  (profile × board size → cell↔point, exact only)    │    close order; driven by a Profile)
             │                                                 │
- ActionCatalogue  (every thing a control can do)              │  Editor "Pads" tab
+ ActionCatalogue  (every thing a control can do)              │  Editor LAUNCHPAD X section
  BindingSet       (action id ↔ control id)                    │    detected model + how it was
    defaultBindings(profile) — semantic, role, priority fill   │    confirmed, generated diagram,
                                                               │    learn mode
@@ -125,7 +125,7 @@ passing unchanged; that is the refactor's safety net.
 |---|---|
 | A device appears (a `MidiDeviceListConnection` callback), or an instance is created, **and this instance has no controller configured** | Run the pipeline (§3.2). If exactly one built-in profile is confirmed, **apply it**: open the ports, take control (`ops.take`), use default bindings plus any saved overrides for that profile, and advise or switch the board size (§4.2). Status: "Push 2 found - using the built-in Push 2 setup". |
 | Same, but **no built-in profile matches** | Open nothing and send nothing. Status: "a MIDI controller is connected, but Go Sequencer has no setup for it" (only when Stage B found a grid-shaped name; otherwise stay silent). |
-| Several known controllers are connected | Apply the first in profile-list order (`profiles[]`) and list the others in the Pads tab so the user can switch. The result is deterministic, not whichever answers first. |
+| Several known controllers are connected | Apply the first in profile-list order (`profiles[]`) and list the others in the LAUNCHPAD X section (PATCH face) so the user can switch. The result is deterministic, not whichever answers first. |
 | Session restore with a stored controller | **The stored config wins.** Reopen it and wait for it to appear, as today. Do not auto-switch to another controller that happens to be connected. |
 | The user pressed **Stop** | Store `controllerMode = "off"`. Automatic detection is **suspended for this instance** until the user picks a controller or presses **Find controller**. Without this, Stop would be undone by the next device-list callback. |
 | Several plugin instances in one Live set | A process-wide claim (a static `std::set<identifier>` behind a mutex) means only one instance takes a device. The others show "used by another Go Sequencer". Claims are released in `close()`. |
@@ -494,7 +494,7 @@ unchanged**. Close the standalone before building; the exe is locked while it ru
 - Add `ActionCatalogue` and `defaultBindings`.
 - Test: `defaultBindings(lpx)` equals today's map.
 - `LaunchpadDiagram` is generated from the bindings.
-- Gate: the Pads tab looks the same and the hardware behaves the same.
+- Gate: the LAUNCHPAD X section looks the same and the hardware behaves the same.
 
 **Step 3: rename and generalise the surface.**
 - `LaunchpadSurface` becomes `ControllerSurface`, and the `lpx::` fit becomes `BoardFit`.

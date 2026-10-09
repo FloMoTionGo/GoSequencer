@@ -16,7 +16,7 @@ namespace theme
     inline juce::Colour background { 0xfffaf6ee };   //  the panel
     inline juce::Colour boardFill  { 0xfff1e9d8 };   //  the board, one step down from the panel
     inline juce::Colour ink        { 0xff2b2924 };   //  text, filled tracks
-    inline juce::Colour dimText    { 0xff726b5c };   //  captions, the status line
+    inline juce::Colour dimText    { 0xff6b6455 };   //  captions, the status line
     inline juce::Colour faintText  { 0xffa79d89 };   //  closed tabs, coordinates, disabled
     inline juce::Colour hairline   { 0xffddd3bd };   //  dropdown rules, switch outlines, empty tracks
     inline juce::Colour gridLine   { 0xffc2b59c };
@@ -28,7 +28,16 @@ namespace theme
     inline juce::Colour lcd        { 0xff2b2924 };
     inline juce::Colour lcdInk     { 0xfff1e9d8 };
     inline juce::Colour lcdDim     { 0xffa79d89 };
-    inline juce::Colour well       { 0xfff4eee2 };
+    inline juce::Colour well       { 0xfff3ede1 };
+
+    //  a toggle switch that is off: its track and its thumb (on, both are the accent and white)
+    inline juce::Colour track      { 0xffece4d3 };
+    inline juce::Colour thumb      { 0xffa79d89 };
+
+    //  the ring round a white stone, and round a black one - which the light
+    //  scheme leaves without, since a black disc already stands out on cream
+    inline juce::Colour stoneEdge  { 0xffa79d89 };
+    inline juce::Colour blackEdge  { 0x00000000 };
 
     //  the stones keep their colour in both schemes: black is always the dark
     //  one, white the light one, whatever the panel behind them does. Black
@@ -36,36 +45,40 @@ namespace theme
     inline const juce::Colour stoneBlack { 0xff171512 };
     inline const juce::Colour stoneWhite { 0xfffaf6ee };
 
-    /** Flips every colour between the light (creamy white) and dark (charcoal)
-        schemes. Values are copied wherever they are used, so anything already
-        drawn or coloured has to be told again - see GoLookAndFeel::applyColours
-        and GoSequencerEditor::setDarkMode. */
+    /** Flips every colour between the light (creamy white) and dark (near
+        black) schemes. Values are copied wherever they are used, so anything
+        already drawn or coloured has to be told again - see
+        GoLookAndFeel::applyColours and GoSequencerEditor::setDarkMode. */
     inline void setDark (bool dark)
     {
         isDark = dark;
 
         if (dark)
         {
-            background = juce::Colour (0xff2a2822);
-            boardFill  = juce::Colour (0xff34302a);
-            ink        = juce::Colour (0xfff2ecdd);
-            dimText    = juce::Colour (0xffada387);
-            faintText  = juce::Colour (0xff756e5c);
-            hairline   = juce::Colour (0xff4a4438);
-            gridLine   = juce::Colour (0xff5c5544);
-            accent     = juce::Colour (0xffe0754f);
-            error      = juce::Colour (0xffe8604a);
-            lcd        = juce::Colour (0xff1c1a16);
-            lcdInk     = juce::Colour (0xfff2ecdd);
-            lcdDim     = juce::Colour (0xff756e5c);
-            well       = juce::Colour (0xff2f2c26);
+            background = juce::Colour (0xff151411);
+            boardFill  = juce::Colour (0xff1e1c18);
+            ink        = juce::Colour (0xffede6d4);
+            dimText    = juce::Colour (0xffa49b86);
+            faintText  = juce::Colour (0xff665f50);
+            hairline   = juce::Colour (0xff34302a);
+            gridLine   = juce::Colour (0xff4b4537);
+            accent     = juce::Colour (0xffe37a52);
+            error      = juce::Colour (0xffec6650);
+            lcd        = juce::Colour (0xff0a0907);
+            lcdInk     = juce::Colour (0xffede6d4);
+            lcdDim     = juce::Colour (0xff6f6757);
+            well       = juce::Colour (0xff1b1a16);
+            track      = juce::Colour (0xff24221d);
+            thumb      = juce::Colour (0xff7a7262);
+            stoneEdge  = juce::Colour (0xff6f6757);
+            blackEdge  = juce::Colour (0xff7a7262);
         }
         else
         {
             background = juce::Colour (0xfffaf6ee);
             boardFill  = juce::Colour (0xfff1e9d8);
             ink        = juce::Colour (0xff2b2924);
-            dimText    = juce::Colour (0xff726b5c);
+            dimText    = juce::Colour (0xff6b6455);
             faintText  = juce::Colour (0xffa79d89);
             hairline   = juce::Colour (0xffddd3bd);
             gridLine   = juce::Colour (0xffc2b59c);
@@ -74,29 +87,47 @@ namespace theme
             lcd        = juce::Colour (0xff2b2924);
             lcdInk     = juce::Colour (0xfff1e9d8);
             lcdDim     = juce::Colour (0xffa79d89);
-            well       = juce::Colour (0xfff4eee2);
+            well       = juce::Colour (0xfff3ede1);
+            track      = juce::Colour (0xffece4d3);
+            thumb      = juce::Colour (0xffa79d89);
+            stoneEdge  = juce::Colour (0xffa79d89);
+            blackEdge  = juce::Colour (0x00000000);
         }
     }
 
+    /** Sizes are CSS pixels: the em size, which JUCE calls the point height,
+        not JUCE's own height (ascent plus descent, a third more for Segoe UI).
+        So 12 here is what font-size: 12px is in the faceplate's web mock, and
+        tracking is letter-spacing in ems. */
+    inline juce::Font sized (juce::FontOptions options, float px, float tracking)
+    {
+        juce::Font f (options.withPointHeight (px));
+
+        if (tracking != 0.0f)
+            f = f.withExtraKerningFactor (tracking * px / juce::jmax (1.0f, f.getHeight()));
+
+        return f;
+    }
+
     /** Segoe UI on Windows; elsewhere the platform's own sans, which is already
-        the right kind of plain. Tracking is a proportion of the height. */
-    inline juce::Font font (float height, int styleFlags = juce::Font::plain, float tracking = 0.0f)
+        the right kind of plain. */
+    inline juce::Font font (float px, int styleFlags = juce::Font::plain, float tracking = 0.0f)
     {
        #if JUCE_WINDOWS
-        return juce::Font (juce::FontOptions ("Segoe UI", height, styleFlags).withKerningFactor (tracking));
+        return sized (juce::FontOptions ("Segoe UI", px, styleFlags), px, tracking);
        #else
-        return juce::Font (juce::FontOptions (height, styleFlags).withKerningFactor (tracking));
+        return sized (juce::FontOptions (px, styleFlags), px, tracking);
        #endif
     }
 
     /** The display's figures: fixed width, so a count ticking over does not
         shuffle everything after it along. */
-    inline juce::Font monoFont (float height)
+    inline juce::Font monoFont (float px)
     {
        #if JUCE_WINDOWS
-        return juce::Font (juce::FontOptions ("Consolas", height, juce::Font::plain));
+        return sized (juce::FontOptions ("Consolas", px, juce::Font::plain), px, 0.0f);
        #else
-        return juce::Font (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), height, juce::Font::plain));
+        return sized (juce::FontOptions (juce::Font::getDefaultMonospacedFontName(), px, juce::Font::plain), px, 0.0f);
        #endif
     }
 }

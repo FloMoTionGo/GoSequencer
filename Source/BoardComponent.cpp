@@ -374,6 +374,7 @@ void BoardComponent::paintGrid (juce::Graphics& g)
         g.fillEllipse (juce::Rectangle<float> (starRadius * 2.0f, starRadius * 2.0f)
                            .withCentre (pointFor (stars[(size_t) i])));
 
+    g.setColour (theme::dimText.withMultipliedAlpha (0.75f));
     g.setFont (theme::font (juce::jmax (8.0f, s * 0.22f)));
 
     for (int i = 0; i < n; ++i)
@@ -395,18 +396,19 @@ void BoardComponent::paintGrid (juce::Graphics& g)
 void BoardComponent::drawStone (juce::Graphics& g, juce::Point<float> centre, float radius,
                                 bool black, float alpha)
 {
-    //  flat discs in fixed colours. An edge goes round whichever stone is close
-    //  to the ground it sits on: white on the light scheme, black on the dark one.
+    //  flat discs in fixed colours. A thin edge goes round whichever stone is
+    //  close to the ground it sits on: white always, black on the dark scheme.
     const auto bounds = juce::Rectangle<float> (radius * 2.0f, radius * 2.0f).withCentre (centre);
-    const float edge = juce::jmax (1.0f, radius * 0.08f);
+    const float edge = black ? 1.4f : 1.2f;
+    const auto edgeColour = black ? theme::blackEdge : theme::stoneEdge;
 
     g.setColour ((black ? theme::stoneBlack : theme::stoneWhite).withMultipliedAlpha (alpha));
     g.fillEllipse (bounds);
 
-    if (black && ! theme::isDark)
+    if (edgeColour.isTransparent())
         return;
 
-    g.setColour ((black ? theme::dimText : theme::faintText).withMultipliedAlpha (alpha));
+    g.setColour (edgeColour.withMultipliedAlpha (alpha));
     g.drawEllipse (bounds.reduced (edge * 0.5f), edge);
 }
 
