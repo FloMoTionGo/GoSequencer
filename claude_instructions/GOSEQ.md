@@ -51,7 +51,7 @@ work. Flags at `PluginProcessor.h:545-549`. A parameter change **may arrive on t
 that is why the indirection exists. Copy this pattern for anything new.
 
 **Board mutation, all message-thread-only** (`PluginProcessor.h:104`): `placeStone` (`cpp:499`),
-`eraseStone` (`:529`), `clearBoard` (`:553`), `loadSgfText` (`:700`), `clearGame`,
+`eraseStone` (`:529`), `clearBoard` (`:553`), `randomizePosition`, `loadSgfText` (`:700`), `clearGame`,
 `setGamePosition` (`:1013`), `startAiSelfPlay`.
 
 **`publishBoard()`** (`cpp:460`) is the single writer of the lock-free `stones[]` mirror, called
@@ -72,7 +72,8 @@ board: `stoneAt`, `stoneIsSpent`, `lastMove`, `currentStep`, `headPosition`, `he
 | `Source/GoAI.h` | Two player pairs, integer-only, fully deterministic. Generates whole games. |
 | `Source/GoTactics.h` | What the reading players know: chains, ladders, influence, eyes. No playouts, no MCTS — deliberate. |
 | `Source/SgfParser.h` | Game records in and out. |
-| `Source/LaunchpadMap.h` | Pad ↔ board point. JUCE-free so it is unit-tested. |
+| `Source/LaunchpadMap.h` | Pad ↔ board point, and `lpx::edgeButtons`: each edge button's job on both layers (Shift = 19). JUCE-free so it is unit-tested. |
+| `Source/RandomPosition.h` | The Random button's game: `moveCount` = points / 3, `settingsFor` (random players, styles, variation, seed; **no opening**). JUCE-free, tested. |
 | `Source/PluginProcessor.*` | Clocks, parameters, state, the board, MIDI generation. |
 | `Source/PluginEditor.*` | The faceplate: two faces (PLAY / PATCH), all controls, the look-and-feel. |
 | `Source/ValueText.h` | Typed text back into values (note names, `50%`, `hold`, `+7`, choice names). JUCE-free, tested. |
@@ -133,7 +134,7 @@ All through `apvts` (`AudioProcessorValueTreeState`, tree type `"GOSEQ"`). Decla
 
 | Group | IDs |
 |---|---|
-| step clock | `rate` (9 divisions), `note`, `gate`, `tempo`, `freeRun`, `playMode` (Spiral/Polyrhythm/Quads out/Quads in), `ringSpread` |
+| step clock | `rate` (9 divisions), `note`, `gate`, `playMode` (Spiral/Polyrhythm/Quads out/Quads in), `ringSpread`; **Standalone only:** `tempo` ("Tempo"), `freeRun` ("Play") |
 | board | `boardSize`, `colourMode` (Alternate/Black/White), `koRule`, `selfCapture` |
 | stone life | `stoneLife`, `lifeMode` (Steps/Placements) |
 | channels | `blackChannel`, `whiteChannel`, `headChannel1..9`, `blackVelocity`, `whiteVelocity` |
@@ -143,12 +144,22 @@ All through `apvts` (`AudioProcessorValueTreeState`, tree type `"GOSEQ"`). Decla
 Only nine have listeners (`cpp:253-261`) — **add to both the ctor and dtor** or you leak a
 dangling listener.
 
-There is **no transport parameter**: the step clock runs when `freeRun || host is playing`
-(`cpp:1360-1363`). `gameRun` is the record's transport, a separate thing.
+**The parameter set depends on the format** (2026-10-09). `createParameterLayout (standalone)` is
+called with `wrapperType == wrapperType_Standalone` - set by the `AudioProcessor` base before the
+`apvts` member is built - and adds `tempo` and `freeRun` only then. The plugin follows its host's
+transport and tempo, with no second transport of its own; the Standalone has no host transport at
+all, so `freeRun` is its Play switch. **`tempoParam` / `freeRunParam` are `nullptr` in the VST3** -
+null-check them. The IDs stayed, so a Standalone keeps its saved state; old plugin sessions
+carrying them just ignore them (VST3 IDs are hashed from the string IDs, so no other parameter
+moved). `isStandalone()` is the editor's switch. The snap harness picks the format with
+`AudioProcessor::setTypeOfNextNewPlugin` (`nextIs`).
+
+The step clock runs when `freeRun || host is playing`. `gameRun` is the record's transport, a
+separate thing.
 
 **Two independent clocks** in `renderBlock` (`cpp:1324-1486`): the step clock (per block,
-sample-accurate, free-run countdown or host ppq) and the game-move clock (advances the record
-onto the live board under a try-lock).
+sample-accurate, a countdown in the Standalone or with no host ppq, else host ppq) and the
+game-move clock (advances the record onto the live board under a try-lock).
 
 ---
 
@@ -180,11 +191,16 @@ component laid out once at **1200 x 720** and scaled as a whole by `setTransform
   (`panelFace`) → **append new faces at the end**. Section frames, the display (LCD), the wordmark
   and the screws are *painted* by `paintPlate` from the `sections` list `resized()` builds.
 - **v3 layout** (branch `ui-faceplate-v3`, 2026-10-09, from the Claude Design canvas
-  `75m6Ai6A9vprZceoZC5QG3`; its source is `mock/preview-v3/`). PLAY left: PLAYHEADS (walk, rate,
-  tempo, free run, lap line) / VOICE (pitch | length | velocity columns) / OUTPUT (lamp + channel
-  cell per voice). PLAY right: RECORD / AI PLAYERS / STONE LIFE. Pinned under the board: board +
+  `75m6Ai6A9vprZceoZC5QG3`; its source is `mock/preview-v3/`). PLAY left: PLAYHEADS (walk, rate
+  - plus tempo and play in the Standalone only, rate centred alone in the plugin - lap line) /
+  VOICE (pitch | length | velocity columns) / OUTPUT (lamp + channel
+  cell per voice). PLAY right: RECORD / SHIRO VS KURO (auto play + you play switches, length /
+  variation / seed) / STONE LIFE. Pinned under the board: board +
   place strip, then RULES (ko, self capture) + hint. PATCH: MIDI OUT (port, status, `RoutingTable`)
-  and LAUNCHPAD X. Sections carry a title (left) and a job (right) cut into the frame. Whose move
+  over a second SHIRO VS KURO (players, opening, they play + Pass + New game - the players' set-up,
+  under the name of the PLAY section whose switches it serves; 2026-10-09), and LAUNCHPAD X.
+  The UI says "auto play" / "you play" (params "Auto Play" / "You Play"); the code still says
+  `aiPlay` / `aiSelfPlay` / `aiOpponent` / match. Sections carry a title (left) and a job (right) cut into the frame. Whose move
   it is in a match shows in the LCD (`MATCH` field); the opening's state only via messages.
 - **Fonts are CSS px.** `theme::font` sets the *point* height (em size), so sizes and
   letter-spacing are copied 1:1 from the web mock's CSS. JUCE's own height is ~1.33x that for
@@ -209,8 +225,14 @@ component laid out once at **1200 x 720** and scaled as a whole by `setTransform
   live stone has just played it.
 - Grey-outs follow `refreshModeDisplay()`, keyed on **mode + board size** (`lastModeKeyShown`),
   which fixes the old `headCount()`-keyed trap below.
-- `LaunchpadDiagram` is a static legend: the 16 edge-button jobs written across the pads (top row
-  on the left half with its button's mark, each side button's job in its own row), pads faint.
+- `LaunchpadDiagram` is a legend: the 16 edge-button jobs written across the pads (top row
+  slanted above it, each side button's job in its own row), pads faint. Labels come from
+  `lpx::edgeButtons`, one layer at a time: the Shift layer while the device's Shift is held (the
+  editor tick polls `launchpad().shiftHeldNow()`) or the mouse is on the drawn Shift key -
+  `hitTest` takes the mouse there only, so the port boxes over it still get their clicks.
+  `labelsHeight` (68) is sized for the longest slanted label, `hold: random`.
+- The **Random** pill sits in the RULES row under Clear Board, at its width; the hint was
+  shortened to make room.
 - Throwaway render/typed-value harness: `build/snap/` (gitignored), a JUCE console app that writes
   `shots/*.png` per face and scheme (plus `edge-*`: nine rings with a missing port, a spiral with
   no record) and types into the real value boxes. It finds controls by **title** - keep them.
@@ -293,6 +315,14 @@ generator, not an insert. Device-level input goes through `juce::MidiInput`, not
   a playhead. Heads are held colours.
 - **`BoardComponent` repaints from the lock-free `stones[]` mirror**, which only `publishBoard()`
   writes. Anything that changes the board must publish, or the screen lags behind the pads.
+- **`publishBoard()` stamps new stones in board-index order**, one placement each, and keeps the
+  old stamp of a stone that sits where one of the same colour sat. A whole position put down at
+  once therefore ages in index order: with a placement-counted life most of it is spent at once.
+  `randomizePosition` restamps every stone together after publishing; `setGamePosition` (a record
+  jump) still has the index-order behaviour.
+- **Every generated AI game opens on the same ten moves** (book or custom, `goai::openingPoint`).
+  A short game is mostly that opening. `randompos::settingsFor` skips it without touching `GoAI.h`:
+  `hasOpening = true` with every point `-1`, so `generate` hands move one to the players.
 
 ---
 
@@ -308,9 +338,16 @@ Approved plan at `C:\Users\flori\.claude\plans\valiant-booping-valley.md`.
   single stone funnel; `placeStone` refuses on their turn; reply via `pendingOpponentReply` →
   `playOpponentReply`; `passMove`, `newMatch`; turn = `nextAlternating`; `matchPasses` saved as an XML
   attribute; restore takes the switch up directly so the listener cannot clear a restored board.
-  AI PLAYERS controls, and the board view refuses erases mid-game.
+  SHIRO VS KURO controls, and the board view refuses erases mid-game.
 - `Source/LaunchpadSurface.*`: written, compiled, owned by the processor as `pads` (declared last, so
   destroyed first); ports persist as `launchpadIn` / `launchpadOut`; full edge-button map.
+- **Shift layer** (branch `launchpad-shift`, 2026-10-09): scene 19 is a momentary Shift (Redraw
+  moved to Shift+69). Free run left the plugin the same day, so Note (96) is now Tie notes and
+  the Launchpad has no transport button. One table, `lpx::edgeButtons` (`LaunchpadMap.h`), drives `handleButton` →
+  `perform (Job)`, `buildFrame` → `lightFor (Job)` and `LaunchpadDiagram`; `testEdgeButtons` pins
+  the first layer. A key with no shift job does nothing under Shift. Hold jobs (clear, random,
+  unload) keep the job taken at press. The logo (99) lights while Shift is held - **not yet
+  confirmed on hardware**.
 - Protocol note checked against Novation's manual.
 
 - Editor Launchpad controls (once a "Pads" tab; now the PATCH face's LAUNCHPAD X section): in/out

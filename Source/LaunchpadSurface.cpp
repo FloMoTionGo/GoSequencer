@@ -39,7 +39,7 @@ namespace
 
     //  about 0.7 s: long enough not to happen by accident, short enough not to
     //  feel like waiting
-    constexpr int clearHoldTicks = 21;
+    constexpr int holdTickCount = 21;
 
     //  every five seconds everything is sent again, whether it changed or not -
     //  a cheap answer to a message the device dropped
@@ -87,6 +87,19 @@ namespace
     {
         if (auto* choice = dynamic_cast<juce::AudioParameterChoice*> (state.getParameter (id)))
             setParameter (choice, choice->convertTo0to1 ((float) ((choice->getIndex() + 1) % choice->choices.size())));
+    }
+
+    /** Moves a whole number along by delta, stopping at either end. */
+    void nudge (juce::AudioProcessorValueTreeState& state, const char* id, int delta)
+    {
+        if (auto* whole = dynamic_cast<juce::AudioParameterInt*> (state.getParameter (id)))
+        {
+            const auto range = whole->getRange();
+            const int next = juce::jlimit (range.getStart(), range.getEnd(), whole->get() + delta);
+
+            if (next != whole->get())
+                setParameter (whole, whole->convertTo0to1 ((float) next));
+        }
     }
 
     juce::StringArray namesOf (const juce::Array<juce::MidiDeviceInfo>& devices)
@@ -258,7 +271,10 @@ void LaunchpadSurface::close()
 
     sent.fill ({});
     settleTicks = 0;
-    clearHeldTicks = -1;
+    heldJob = lpx::Job::none;
+    heldIndex = heldTicks = -1;
+    shiftHeld = false;
+    shiftDown.store (false, std::memory_order_relaxed);
     refusalIndex = -1;
     refusalTicks = 0;
 }
@@ -282,7 +298,7 @@ void LaunchpadSurface::leaveProgrammerMode()
     //  lights out first, while the device still listens to them - told to leave
     //  programmer mode before this, it would keep showing the last frame
     for (int index = 11; index < lpx::indexCount; ++index)
-        if (lpx::isPad (index) || lpx::isScene (index) || lpx::isTop (index))
+        if (lpx::isPad (index) || lpx::isScene (index) || lpx::isTop (index) || index == lpx::logoIndex)
             output->sendMessageNow (juce::MidiMessage (0x90, index, 0));
 
     output->sendMessageNow (juce::MidiMessage (programmerOff, (int) sizeof (programmerOff)));
@@ -300,15 +316,14 @@ void LaunchpadSurface::timerCallback()
         return;
     }
 
-    if (clearHeldTicks >= 0 && ++clearHeldTicks >= clearHoldTicks)
+    if (heldTicks >= 0 && ++heldTicks >= holdTickCount)
     {
-        clearHeldTicks = -1;
+        const auto job = heldJob;
 
-        //  in a game, an empty board is a new game - which may mean they open
-        if (processor.matchActive())
-            processor.newMatch();
-        else
-            processor.clearBoard();
+        heldJob = lpx::Job::none;
+        heldIndex = heldTicks = -1;
+
+        perform (job);
     }
 
     if (refusalTicks > 0 && --refusalTicks == 0)
@@ -412,43 +427,79 @@ void LaunchpadSurface::buildFrame (Frame& frame) const
         }
     }
 
-    //  ---- the top row ------------------------------------------------------
+    //  ---- round the edge: the layer Shift says, and Shift itself ------------
+    for (const auto& button : lpx::edgeButtons)
+    {
+        const bool second = shiftHeld && button.index != lpx::shiftIndex;
+        lit (button.index, lightFor (second ? button.shifted : button.plain, button.index));
+    }
+
+    //  the logo says the edge is showing its second layer
+    lit (lpx::logoIndex, shiftHeld ? palette::on : palette::off);
+}
+
+std::uint8_t LaunchpadSurface::lightFor (lpx::Job job, int index) const
+{
+    using lpx::Job;
+
     auto& state = processor.apvts;
 
-    const auto onOff = [&state] (const char* id) { return isOn (state, id) ? palette::on : palette::idle; };
+    const auto onOff  = [&state] (const char* id) { return isOn (state, id) ? palette::on : palette::idle; };
     const auto usable = [] (bool b) { return b ? palette::idle : palette::off; };
+    const bool held   = (index == heldIndex);
 
-    lit (lpx::topIndex (0), palette::idle);                                    //  91  step rate faster
-    lit (lpx::topIndex (1), palette::idle);                                    //  92  step rate slower
-    lit (lpx::topIndex (2), usable (processor.hasGame()));                     //  93  a move back
-    lit (lpx::topIndex (3), usable (processor.hasGame()));                     //  94  a move on
-    lit (lpx::topIndex (4), onOff ("gameRun"));                                //  95  run game
-    lit (lpx::topIndex (5), onOff ("freeRun"));                                //  96  free run
+    switch (job)
+    {
+        case Job::none:           return palette::off;     //  dark: nothing to do on this layer
+        case Job::shift:          return shiftHeld ? palette::on : palette::idle;
 
-    //  97: the colour the next press places, in that colour - in a game the
-    //  colours alternate whatever Place says, so the button has nothing to show
-    lit (lpx::topIndex (6), processor.matchActive() ? palette::off
-                          : processor.colourForNextMove() == go::Stone::black ? palette::blackStone
-                                                                              : palette::whiteStone);
+        case Job::stepBack:
+        case Job::stepOn:
+        case Job::firstMove:
+        case Job::lastMove:       return usable (processor.hasGame());
 
-    lit (lpx::topIndex (7), clearHeldTicks >= 0 ? palette::refused : palette::idle);   //  98  clear, held
+        case Job::runGame:        return onOff ("gameRun");
+        case Job::loop:           return onOff ("gameLoop");
+        case Job::waveReplay:     return onOff ("waveReplay");
+        case Job::selfPlay:       return onOff ("aiPlay");
+        case Job::tieNotes:       return onOff ("tieNotes");
 
-    //  ---- the right hand column, top to bottom ------------------------------
-    lit (lpx::sceneIndex (0), processor.matchActive() ? palette::on : palette::idle);  //  89  play against them
-    lit (lpx::sceneIndex (1), usable (processor.yourTurn()));                          //  79  pass
-    lit (lpx::sceneIndex (2), usable (processor.eraseAllowed() && processor.lastMove() >= 0));  //  69  lift the last stone
-    lit (lpx::sceneIndex (3), onOff ("gameLoop"));                             //  59  loop
-    lit (lpx::sceneIndex (4), onOff ("waveReplay"));                           //  49  wave replay
-    lit (lpx::sceneIndex (5), palette::idle);                                  //  39  move rate faster
-    lit (lpx::sceneIndex (6), palette::idle);                                  //  29  move rate slower
-    lit (lpx::sceneIndex (7), palette::idle);                                  //  19  redraw
+        //  the colour the next press places, in that colour - in a game the
+        //  colours alternate whatever Place says, so the button has nothing to show
+        case Job::cyclePlace:
+            return processor.matchActive() ? palette::off
+                 : processor.colourForNextMove() == go::Stone::black ? palette::blackStone
+                                                                     : palette::whiteStone;
+
+        case Job::holdClear:
+        case Job::holdRandom:     return held ? palette::refused : palette::idle;
+        case Job::holdUnload:     return held ? palette::refused : usable (processor.hasGame());
+
+        case Job::playAgainst:    return processor.matchActive() ? palette::on : palette::idle;
+        case Job::pass:           return usable (processor.yourTurn());
+        case Job::liftLast:       return usable (processor.eraseAllowed() && processor.lastMove() >= 0);
+
+        case Job::rateFaster:
+        case Job::rateSlower:
+        case Job::moveRateFaster:
+        case Job::moveRateSlower:
+        case Job::noteUp:
+        case Job::noteDown:
+        case Job::cycleWalk:
+        case Job::cyclePlayers:
+        case Job::redraw:
+        case Job::lifeLonger:
+        case Job::lifeShorter:    return palette::idle;
+    }
+
+    return palette::off;
 }
 
 void LaunchpadSurface::sendFrame (const Frame& next, bool everything)
 {
     for (int index = 11; index < lpx::indexCount; ++index)
     {
-        if (! (lpx::isPad (index) || lpx::isScene (index) || lpx::isTop (index)))
+        if (! (lpx::isPad (index) || lpx::isScene (index) || lpx::isTop (index) || index == lpx::logoIndex))
             continue;
 
         const auto& led = next[(size_t) index];
@@ -547,49 +598,98 @@ void LaunchpadSurface::handlePad (int index)
 
 void LaunchpadSurface::handleButton (int index, bool pressed)
 {
-    //  98 acts on a hold, so it has to hear the release as well
-    if (index == lpx::topIndex (7))
+    //  Shift only changes what the others do, so it has to hear the release too
+    if (index == lpx::shiftIndex)
     {
-        clearHeldTicks = pressed ? 0 : -1;
+        shiftHeld = pressed;
+        shiftDown.store (pressed, std::memory_order_relaxed);
         return;
     }
 
     if (! pressed)
+    {
+        //  let go before the hold was long enough: nothing happens
+        if (index == heldIndex)
+        {
+            heldJob = lpx::Job::none;
+            heldIndex = heldTicks = -1;
+        }
+
         return;             //  everything else acts the moment it goes down
+    }
+
+    const auto job = lpx::jobFor (index, shiftHeld);
+
+    if (lpx::isHoldJob (job))
+    {
+        heldJob = job;
+        heldIndex = index;
+        heldTicks = 0;
+        return;
+    }
+
+    perform (job);
+}
+
+void LaunchpadSurface::perform (lpx::Job job)
+{
+    using lpx::Job;
 
     auto& state = processor.apvts;
 
-    switch (index)
+    switch (job)
     {
         //  Rate runs 1/1 to 1/32, so faster is up the list. Move Rate runs 1/4 to
         //  one lap, so faster is down it - hence the signs look the wrong way round.
-        case lpx::topIndex (0):   stepChoice (state, "rate", +1);           break;
-        case lpx::topIndex (1):   stepChoice (state, "rate", -1);           break;
-        case lpx::topIndex (2):   processor.nudgeGamePosition (-1);         break;
-        case lpx::topIndex (3):   processor.nudgeGamePosition (+1);         break;
-        case lpx::topIndex (4):   toggle (state, "gameRun");                break;
-        case lpx::topIndex (5):   toggle (state, "freeRun");                break;
-        case lpx::topIndex (6):   cycleChoice (state, "colourMode");        break;
+        case Job::rateFaster:     stepChoice (state, "rate", +1);           break;
+        case Job::rateSlower:     stepChoice (state, "rate", -1);           break;
+        case Job::stepBack:       processor.nudgeGamePosition (-1);         break;
+        case Job::stepOn:         processor.nudgeGamePosition (+1);         break;
+        case Job::runGame:        toggle (state, "gameRun");                break;
+        case Job::tieNotes:       toggle (state, "tieNotes");               break;
+        case Job::cyclePlace:     cycleChoice (state, "colourMode");        break;
 
-        case lpx::sceneIndex (0): toggle (state, "aiOpponent");             break;
-        case lpx::sceneIndex (1): processor.passMove();                     break;
-        case lpx::sceneIndex (2):
+        //  in a game, an empty board is a new game - which may mean they open
+        case Job::holdClear:
+            if (processor.matchActive())
+                processor.newMatch();
+            else
+                processor.clearBoard();
+            break;
+
+        case Job::playAgainst:    toggle (state, "aiOpponent");             break;
+        case Job::pass:           processor.passMove();                     break;
+        case Job::liftLast:
             if (processor.eraseAllowed() && processor.lastMove() >= 0)
                 processor.eraseStone (processor.lastMove());
             break;
-        case lpx::sceneIndex (3): toggle (state, "gameLoop");               break;
-        case lpx::sceneIndex (4): toggle (state, "waveReplay");             break;
-        case lpx::sceneIndex (5): stepChoice (state, "gameRate", -1);       break;
-        case lpx::sceneIndex (6): stepChoice (state, "gameRate", +1);       break;
+        case Job::loop:           toggle (state, "gameLoop");               break;
+        case Job::waveReplay:     toggle (state, "waveReplay");             break;
+        case Job::moveRateFaster: stepChoice (state, "gameRate", -1);       break;
+        case Job::moveRateSlower: stepChoice (state, "gameRate", +1);       break;
+
+        //  ---- with Shift held
+        case Job::noteUp:         nudge (state, "note", +1);                break;
+        case Job::noteDown:       nudge (state, "note", -1);                break;
+        case Job::firstMove:      processor.setGamePosition (0);            break;
+        case Job::lastMove:       processor.setGamePosition (processor.gameMoveCount());  break;
+        case Job::selfPlay:       toggle (state, "aiPlay");                 break;
+        case Job::cycleWalk:      cycleChoice (state, "playMode");          break;
+        case Job::holdRandom:     processor.randomizePosition();            break;
+        case Job::cyclePlayers:   cycleChoice (state, "aiPlayers");         break;
+        case Job::holdUnload:     processor.clearGame();                    break;
+        case Job::lifeLonger:     nudge (state, "stoneLife", +1);           break;
+        case Job::lifeShorter:    nudge (state, "stoneLife", -1);           break;
 
         //  put the surface right: back into programmer mode and every light
         //  sent again, for when the device has been knocked out of step
-        case lpx::sceneIndex (7):
+        case Job::redraw:
             if (output != nullptr)
                 enterProgrammerMode();
             break;
 
-        default: break;
+        case Job::none:
+        case Job::shift:          break;
     }
 }
 

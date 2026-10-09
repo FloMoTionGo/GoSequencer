@@ -1,5 +1,6 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
+#include "RandomPosition.h"
 #include "ValueText.h"
 
 #include <cmath>
@@ -112,7 +113,7 @@ namespace
     }
 }
 
-juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::createParameterLayout()
+juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::createParameterLayout (bool standalone)
 {
     using namespace juce;
 
@@ -146,17 +147,26 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                                return (float) valuetext::percent (text.toStdString()).value_or (0.5);
                                                            })));
 
-    layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "tempo", 1 }, "Free Tempo",
-                                                       NormalisableRange<float> (20.0f, 300.0f, 0.1f), 120.0f,
-                                                       AudioParameterFloatAttributes()
-                                                           .withStringFromValueFunction ([] (float v, int)
-                                                           {
-                                                               return String (v, 1) + " BPM";
-                                                           })
-                                                           .withValueFromStringFunction ([] (const String& text)
-                                                           {
-                                                               return (float) valuetext::number (text.toStdString(), { "bpm" }).value_or (120.0);
-                                                           })));
+    //  The clock of its own, and the switch that runs it, only where there is
+    //  no host to do either: in a plugin they would be a second transport and a
+    //  tempo the host's overrides. The IDs stay what they were, so a Standalone
+    //  keeps what it saved; a plugin session that has them simply ignores them.
+    if (standalone)
+    {
+        layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "tempo", 1 }, "Tempo",
+                                                           NormalisableRange<float> (20.0f, 300.0f, 0.1f), 120.0f,
+                                                           AudioParameterFloatAttributes()
+                                                               .withStringFromValueFunction ([] (float v, int)
+                                                               {
+                                                                   return String (v, 1) + " BPM";
+                                                               })
+                                                               .withValueFromStringFunction ([] (const String& text)
+                                                               {
+                                                                   return (float) valuetext::number (text.toStdString(), { "bpm" }).value_or (120.0);
+                                                               })));
+
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { "freeRun", 1 }, "Play", false));
+    }
 
     //  Spiral routes by colour; the multi head modes route by playhead. Every
     //  one of them is set outright rather than offset from a base, so any two
@@ -172,7 +182,6 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "blackVelocity", 1 }, "Black Velocity", 1, 127, 100));
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "whiteVelocity", 1 }, "White Velocity", 1, 127, 100));
 
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "freeRun", 1 }, "Free Run", false));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "koRule", 1 }, "Ko Rule", true));
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "selfCapture", 1 }, "Self Capture", false));
 
@@ -227,7 +236,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     layout.add (std::make_unique<AudioParameterInt> (ParameterID { "waveGap", 1 }, "Wave Gap", 2, 128, 20));
 
     //  ---- the two self-play players ----------------------------------------
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "aiPlay", 1 }, "AI Self-Play", false));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "aiPlay", 1 }, "Auto Play", false));
 
     //  a game is the motif plus what the players make of it, so the shortest
     //  worth having is a little longer than the ten move book
@@ -263,7 +272,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     //  ---- playing against them ---------------------------------------------
     //  The same pair, the same Variation and the same Seed: this switch only
     //  changes whether they write a whole game or answer yours a move at a time.
-    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "aiOpponent", 1 }, "AI Opponent", false));
+    layout.add (std::make_unique<AudioParameterBool> (ParameterID { "aiOpponent", 1 }, "You Play", false));
 
     //  they take white by default, so the opening move is yours
     layout.add (std::make_unique<AudioParameterChoice> (ParameterID { "aiOpponentColour", 1 }, "Opponent Plays",
@@ -279,7 +288,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
 //==============================================================================
 GoSequencerProcessor::GoSequencerProcessor()
     : AudioProcessor (BusesProperties().withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
-      apvts (*this, nullptr, "GOSEQ", createParameterLayout())
+      apvts (*this, nullptr, "GOSEQ", createParameterLayout (wrapperType == wrapperType_Standalone))
 {
     noteParam        = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("note"));
     blackChannel     = dynamic_cast<juce::AudioParameterInt*>    (apvts.getParameter ("blackChannel"));
@@ -685,6 +694,85 @@ void GoSequencerProcessor::clearBoard()
     matchOver.store (false, std::memory_order_relaxed);
 }
 
+juce::String GoSequencerProcessor::randomizePosition()
+{
+    //  The draw only picks the game; the game itself is as reproducible as any
+    //  the players write. Nothing here is written back to the AI parameters.
+    auto& random = juce::Random::getSystemRandom();
+
+    randompos::Pick pick;
+    pick.players    = random.nextBool() ? goai::Players::reading : goai::Players::classic;
+    pick.swapStyles = random.nextBool();
+    pick.variation  = randompos::minVariation + random.nextInt (randompos::maxVariation - randompos::minVariation + 1);
+    pick.seed       = (std::uint32_t) (1 + random.nextInt (99999));
+
+    const int size = boardSize();
+    const auto settings = randompos::settingsFor (size, pick);
+    const auto played = goai::generate (settings);
+
+    //  whatever owned the board gives it up first, as for a game against them:
+    //  a record or a run would otherwise go on writing over the new stones
+    releaseMatch();
+    clearGame();
+
+    handPlayed.clear();
+    go::Stone next = go::Stone::black;
+
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+        board.clear();
+
+        //  under the rules the game was written with, so every move stands
+        for (const auto& move : played.moves)
+        {
+            if (board.play (move.index, move.colour, false, true) != go::MoveResult::ok)
+                continue;
+
+            //  kept as a sequence, as if played by hand, so Lift Last and From
+            //  Board work on it like on any position clicked in
+            if ((int) handPlayed.size() < 256)
+                handPlayed.push_back (move);
+
+            next = go::other (move.colour);
+        }
+
+        //  a position, as a record's jump to a move is: no prisoners carried in
+        board.resetCaptureCounts();
+        publishBoard();
+
+        //  One position, not a run of placements. publishBoard() stamps new
+        //  stones one after another in board order, and with a life counted in
+        //  placements the first dozen of a 9x9's 27 would be spent before they
+        //  ever played - and a stone that sits where one of the same colour sat
+        //  before is not new to it at all, so it keeps the old one's age.
+        //  Stamped together, every stone starts fresh and they age as one.
+        const auto now      = ageClock.load (std::memory_order_relaxed);
+        const auto together = placeCounter.load (std::memory_order_relaxed);
+
+        for (int i = 0; i < board.cellCount(); ++i)
+        {
+            if (board.at (i) != go::Stone::none)
+            {
+                bornAt[(size_t) i].store (now, std::memory_order_relaxed);
+                placedAt[(size_t) i].store (together, std::memory_order_relaxed);
+            }
+        }
+    }
+
+    nextAlternating.store ((int) next, std::memory_order_relaxed);
+    matchPasses.store (0, std::memory_order_relaxed);
+    matchOver.store (false, std::memory_order_relaxed);
+
+    //  short enough for the display; the seed is left out, since no control
+    //  can play a position back from it
+    const bool reading = (pick.players == goai::Players::reading);
+
+    return "random position: " + juce::String (played.moveCount()) + " moves, "
+         + (reading ? "reading" : "classic") + " players, Black "
+         + (reading ? settings.readingBlack.name : settings.black.name)
+         + ", variation " + juce::String (pick.variation) + "%";
+}
+
 //==============================================================================
 void GoSequencerProcessor::parameterChanged (const juce::String& parameterID, float)
 {
@@ -1069,7 +1157,7 @@ void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
 
         //  there is no file behind this one, and nothing to write into a saved
         //  session either: the seed and the game number bring it back exactly
-        sourceName = "AI self-play";
+        sourceName = "auto play";
 
         board.setSize (size);
         rebuildBoardFromGameLocked (0);
@@ -1626,7 +1714,9 @@ void GoSequencerProcessor::renderBlock (juce::AudioBuffer<float>& buffer, juce::
     if (numSamples <= 0)
         return;
 
-    double bpm = (double) tempoParam->get();
+    //  The Standalone's own Tempo, which no playhead there overrides; a plugin
+    //  takes the host's, and 120 only from a host that gives none
+    double bpm = tempoParam != nullptr ? (double) tempoParam->get() : 120.0;
     double barBeats = 4.0;
     bool hostPlaying = false, ppqValid = false;
     double ppq = 0.0;
@@ -1652,7 +1742,9 @@ void GoSequencerProcessor::renderBlock (juce::AudioBuffer<float>& buffer, juce::
         }
     }
 
-    const bool freeRun = freeRunParam->get();
+    //  Play exists in the Standalone only, where no host transport ever runs;
+    //  a plugin runs exactly while its host plays
+    const bool freeRun = freeRunParam != nullptr && freeRunParam->get();
     const bool isNowRunning = freeRun || hostPlaying;
 
     running.store (isNowRunning, std::memory_order_relaxed);

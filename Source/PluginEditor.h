@@ -198,20 +198,38 @@ private:
     and writes the real job by each one: the top row's above it, slanted, one
     starting over each key; each side button's in its own row, pointing at it.
     The left half of the pads is left empty for the two port dropdowns, which
-    the editor lays over it. It only draws: clicks go straight through. */
+    the editor lays over it.
+
+    The jobs come from lpx::edgeButtons, one layer at a time: the second while
+    Shift is held on the device, or while the mouse is on the drawn Shift key -
+    the one place the drawing takes the mouse. Clicks anywhere else go straight
+    through. */
 class LaunchpadDiagram final : public juce::Component
 {
 public:
-    static constexpr int pitch = 26, padding = 6, labelsHeight = 58, labelsGap = 4;
+    //  labelsHeight: room for the longest slanted job, "hold: random"
+    static constexpr int pitch = 26, padding = 6, labelsHeight = 68, labelsGap = 4;
     static constexpr int sketchSide = 9 * pitch + 2 * padding + 2;
     static constexpr int width = sketchSide, height = labelsHeight + labelsGap + sketchSide;
-
-    LaunchpadDiagram() { setInterceptsMouseClicks (false, false); }
 
     /** The left half of the pads, in this component's coordinates. */
     static juce::Rectangle<int> leftHalf();
 
+    /** Whether Shift is held on the device; repaints only on a change. */
+    void setDeviceShift (bool held);
+
     void paint (juce::Graphics&) override;
+    bool hitTest (int x, int y) override;
+    void mouseEnter (const juce::MouseEvent&) override;
+    void mouseExit (const juce::MouseEvent&) override;
+
+private:
+    /** The bottom side button - Shift - in this component's coordinates. */
+    static juce::Rectangle<int> shiftKey();
+
+    bool showingShift() const noexcept { return deviceShift || hovering; }
+
+    bool deviceShift = false, hovering = false;
 };
 
 //==============================================================================
@@ -381,7 +399,7 @@ private:
                                       runGameAttachment, loopGameAttachment, waveReplayAttachment,
                                       aiPlayAttachment, aiOpponentAttachment;
 
-    juce::TextButton clearButton, loadButton, unloadButton, previousMoveButton, nextMoveButton,
+    juce::TextButton clearButton, randomButton, loadButton, unloadButton, previousMoveButton, nextMoveButton,
                      openingFromBoardButton, openingBookButton, passButton, newMatchButton;
 
     juce::Slider moveSlider;
@@ -406,6 +424,10 @@ private:
     bool lastAiShown = false;
     int lastAiGameShown = -1;
 
+    //  and a record can go with nothing clicked here either - unloaded from the
+    //  Launchpad, or thrown out by a random position - so its length is watched
+    int lastGameMovesShown = -1;
+
     /** The opening's two buttons: Use book only once there is an opening of
         your own to go back from. */
     void refreshOpeningDisplay();
@@ -428,7 +450,7 @@ private:
 
     RefreshingComboBox portBox;
     RoutingTable routingTable;
-    juce::Label portCaption, portStatusLabel, portNoteLabel, routingNoteLabel;
+    juce::Label portCaption, portStatusLabel, portNoteLabel, routingNoteLabel, playersNoteLabel;
     juce::StringArray portItems;        //  item id i + 2 is portItems[i]; id 1 is Off
     bool lastPortOpenShown = false;
 

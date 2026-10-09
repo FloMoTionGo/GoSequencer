@@ -113,6 +113,14 @@ public:
 
     void clearBoard();
 
+    /** Clears the board and plays a third of its points out at once, by players
+        with a seed, a variation and styles drawn at random (RandomPosition.h).
+        It ends whatever owned the board - a record, a run of self-play, a game
+        against the players - and leaves its own parameters alone, so the
+        self-play settings stay as they were set. Message thread only. Returns
+        a line for the editor saying what was drawn. */
+    juce::String randomizePosition();
+
     go::Stone stoneAt (int idx) const noexcept
     {
         return (idx >= 0 && idx < go::maxCells)
@@ -370,7 +378,12 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
-    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    /** The Standalone app has no host to start, stop or set the tempo, so it
+        alone has the Play switch (parameter "freeRun") and its own Tempo. A
+        plugin follows the host's transport and tempo, and has neither. */
+    bool isStandalone() const noexcept { return wrapperType == wrapperType_Standalone; }
+
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout (bool standalone);
 
     static const std::array<double, 9>& rateInBeats();
     static juce::StringArray rateNames();

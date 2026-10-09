@@ -30,8 +30,8 @@ on it · `[?]` open question, answer on hardware.
 | Fit rule | `lpx::canShow(size)` = `size == 8` | Exact fit only. The grid stays dark on 9/13/19. |
 | Geometry | `Source/LaunchpadMap.h` (JUCE-free, tested in `testPadMapping`) | `padIndex = (8-row)*10 + col + 1`, scene column, top row, logo. |
 | Protocol | `LaunchpadSurface.cpp` | Programmer-mode SysEx is hard-coded with model byte `0C`; LEDs are `0x90\|type, index, palette`; colours come from the `palette::` constants. |
-| Function map | `LaunchpadSurface::handleButton` (switch) + `buildFrame` (LED per button) | Hard-coded: 16 actions on 16 fixed indices. |
-| Map help | `LaunchpadDiagram` in `PluginEditor.h/.cpp` | A drawing plus two hard-coded 8-string label arrays, kept in sync with the switch by hand. |
+| Function map | `lpx::edgeButtons` in `LaunchpadMap.h` (since 2026-10-09) → `handleButton` / `perform (Job)` and `buildFrame` / `lightFor (Job)` | One JUCE-free table: 15 jobs on the first layer, a second layer while **Shift (scene 19)** is held, Redraw moved to Shift+69. Still LPX-only and fixed - not yet profile data. |
+| Map help | `LaunchpadDiagram` in `PluginEditor.h/.cpp` | Drawn from the same table, one layer at a time (no more hand-synced label arrays). |
 | Persistence | `apvts.state` properties `launchpadIn` / `launchpadOut` | Port names only. No profile or binding is stored. |
 | Input filter | `handleIncomingMidiMessage` | Anything that is not 3 bytes is dropped, **so SysEx replies are thrown away**. Every 3-byte message is queued, so **a Push 2's aftertouch stream would fill the 256-slot queue** (§6.4). |
 
@@ -271,7 +271,7 @@ persisted** in bindings, so they are append-only and never renamed.
 | `transport.rateUp` / `transport.rateDown` | press, `stepChoice rate ±1` | 91 / 92 | idle | 2 | `up` / `down` |
 | `game.stepBack` / `game.stepOn` | press, `nudgeGamePosition ∓1` | 93 / 94 | usable if `hasGame()` | 3 | `left` / `right` |
 | `game.run` | toggle `gameRun` | 95 | on/idle | 1 | — |
-| `sequencer.freeRun` | toggle `freeRun` | 96 | on/idle | 2 | `play` |
+| `sequencer.freeRun` | toggle `freeRun` - **Standalone only** (the plugin has no such parameter since 2026-10-09; bind nothing there) | — (96 was it until 2026-10-09) | on/idle | 2 | `play` |
 | `board.cyclePlace` | press, `cycleChoice colourMode` | 97 | the next stone's colour; off in a match | 3 | — |
 | `board.clear` | **hold** 21 ticks, `clearBoard` / `newMatch` | 98 | refused (red) while held | 1 | `del` |
 | `match.toggle` | toggle `aiOpponent` | 89 | on/idle | 1 | — |
@@ -280,19 +280,34 @@ persisted** in bindings, so they are append-only and never renamed.
 | `game.loop` | toggle `gameLoop` | 59 | on/idle | 3 | `repeat` |
 | `game.waveReplay` | toggle `waveReplay` | 49 | on/idle | 3 | — |
 | `game.rateFaster` / `game.rateSlower` | `stepChoice gameRate −1/+1` (inverted list) | 39 / 29 | idle | 3 | — |
-| `surface.redraw` | re-take and redraw | 19 | idle | 4 (droppable) | — |
+| `surface.redraw` | re-take and redraw | **shift + 69** (was 19) | idle | 4 (droppable) | — |
 | *new, for encoders* `game.scrub` | relative: `nudgeGamePosition(delta)` | — | — | 2 | encoder |
 | *new* `transport.rate` / `game.rate` | relative: `stepChoice` by the sign, rate-limited | — | — | 3 | encoder |
 | *new* `match.new` | press, `newMatch` | — (hold 98 in a match) | usable in a match | 2 | `newItem` |
 
+**The LPX shift layer** (2026-10-09; `lpx::Job` names in brackets) - scene 19 became the `shift`
+role, and these went onto shift + button. Give them ids from this list when the catalogue is built:
+
+| id | kind | on LPX | LED role |
+|---|---|---|---|
+| `sequencer.noteUp` / `noteDown` (`noteUp`/`noteDown`) | press, `note` ±1 | shift + 91 / 92 | idle |
+| `game.first` / `game.last` (`firstMove`/`lastMove`) | press, `setGamePosition` 0 / end | shift + 93 / 94 | usable if `hasGame()` |
+| `ai.selfPlay` (`selfPlay`) | toggle `aiPlay` | shift + 95 | on/idle |
+| `sequencer.tieNotes` (`tieNotes`) | toggle `tieNotes` | **96** (plain; was shift + 96 until Free run left) | on/idle |
+| `sequencer.cycleWalk` (`cycleWalk`) | press, `cycleChoice playMode` | shift + 97 | idle |
+| `board.random` (`holdRandom`) | **hold**, `randomizePosition` | shift + 98 | refused while held |
+| `ai.cyclePlayers` (`cyclePlayers`) | press, `cycleChoice aiPlayers` | shift + 89 | idle |
+| `game.unload` (`holdUnload`) | **hold**, `clearGame` | shift + 79 | usable if `hasGame()` |
+| `life.longer` / `life.shorter` (`lifeLonger`/`lifeShorter`) | press, `stoneLife` ±1 | shift + 39 / 29 | idle |
+
 Each entry is `{ id, kind (press|hold|toggle|relative), perform, ledRole, label, priority, sem,
 preferredRoles[] }`. `buildFrame` loops over the bindings, and **`LaunchpadDiagram` is generated from
-the same table**, which removes today's by-hand sync.
+the same table** - which `lpx::edgeButtons` already does for the LPX alone.
 
 ### 5.2 Default bindings (`defaultBindings(profile)`, deterministic, constexpr-testable)
 
 1. **Semantic match first.** A control whose `sem` equals an action's hint takes that action: arrows
-   take rate/step, Undo takes lift-last, Delete takes clear (a hold), Play takes free run, New takes
+   take rate/step, Undo takes lift-last, Delete takes clear (a hold), Play takes free run (Standalone only), New takes
    new match, Repeat takes loop.
 2. **Encoders** take the relative actions, in `order`: scrub first.
 3. **Group by role.** Transport/replay actions prefer the control row nearest the top of the grid
@@ -305,8 +320,9 @@ the same table**, which removes today's by-hand sync.
    Live `[M]`.
 7. **`board.clear` stays a hold** on every device.
 
-**First test:** `defaultBindings(lpx)` must reproduce today's 16 index↔action pairs exactly (give
-the LPX profile no `sem` hints that would move anything). Otherwise the refactor silently changes
+**First test:** `defaultBindings(lpx)` must reproduce today's `lpx::edgeButtons` exactly - both
+layers, with the LPX profile's scene 19 as its `shift` role (give it no `sem` hints that would
+move anything). `testEdgeButtons` already pins that table. Otherwise the refactor silently changes
 the user's controller.
 
 ### 5.3 Overrides, learn mode, persistence, transfer
@@ -424,7 +440,7 @@ Everything here is `[M]` from Ableton's *Push 2 MIDI and Display Interface Manua
 | Undo (119) | `board.liftLast` |
 | Delete (118), hold | `board.clear` |
 | New (87) | `match.new` |
-| Play (85) | `sequencer.freeRun` |
+| Play (85) | `sequencer.freeRun` in the Standalone; unbound in the plugin, where the host is the transport |
 | Repeat (56) | `game.loop` |
 | cc20–27 (above the pads) | `game.run`, `game.waveReplay`, `board.cyclePlace`, … |
 | cc43…36 (right of the pads) | `match.toggle`, `match.pass`, `game.rateFaster`, `game.rateSlower`, … |

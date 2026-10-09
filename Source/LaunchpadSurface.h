@@ -99,6 +99,10 @@ public:
     /** Whether the grid is being driven right now. */
     bool isOpen() const noexcept { return open.load (std::memory_order_relaxed); }
 
+    /** Whether Shift is held down on the device, so the editor's drawing of it
+        can show the same layer the buttons are showing. */
+    bool shiftHeldNow() const noexcept { return shiftDown.load (std::memory_order_relaxed); }
+
 private:
     //==============================================================================
     /** One light. The type is what the device should do with the colour -
@@ -152,6 +156,12 @@ private:
     void handlePad    (int index);
     void handleButton (int index, bool pressed);
 
+    /** Does what an edge button's job says - see lpx::edgeButtons. */
+    void perform (lpx::Job);
+
+    /** The palette colour of the button at index while it has this job. */
+    std::uint8_t lightFor (lpx::Job, int index) const;
+
     void updateStatus (juce::String);
 
     /** What the status line says while the surface is being driven. */
@@ -194,9 +204,16 @@ private:
 
     int refusalIndex = -1, refusalTicks = 0;
 
-    //  Clear is on a hold, since the button sits beside four that are pressed
-    //  all the time: -1 while it is up, else how many ticks it has been down
-    int clearHeldTicks = -1;
+    //  Clear, Random and Unload act on a hold, since their buttons sit beside
+    //  ones that are pressed all the time. The job is taken when the button
+    //  goes down, so letting go of Shift halfway does not change what fires.
+    //  heldTicks is -1 while nothing is held, else how many ticks it has been.
+    lpx::Job heldJob = lpx::Job::none;
+    int heldIndex = -1, heldTicks = -1;
+
+    //  Shift: the message thread's own copy, and one for the editor to read
+    bool shiftHeld = false;
+    std::atomic<bool> shiftDown { false };
 
     juce::String statusText;
 

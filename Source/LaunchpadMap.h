@@ -20,6 +20,9 @@
 
 #include "GoBoard.h"
 
+#include <array>
+#include <cstdint>
+
 namespace lpx
 {
     inline constexpr int side  = 8;
@@ -88,4 +91,80 @@ namespace lpx
 
     /** Whether the grid can show this board at all. */
     inline constexpr bool canShow (int size) noexcept { return size == boardSize; }
+
+    //==============================================================================
+    //  What the sixteen buttons round the edge do. One table, read by the device
+    //  (LaunchpadSurface: what a press does and how each button is lit) and by
+    //  the editor's drawing of it (LaunchpadDiagram), so the three cannot drift
+    //  apart the way three hand kept lists did.
+    //
+    //  The bottom button of the right hand column is Shift: while it is held,
+    //  every other button does its second job. A button with no second job does
+    //  nothing then, rather than its first - a slip of the thumb should not
+    //  quietly do something else.
+
+    /** A job a button can have. Nothing stores these, so the order is free;
+        bindings that get saved (claude_instructions/midi_controller.md) will
+        need names of their own. */
+    enum class Job : std::uint8_t
+    {
+        none, shift,
+
+        //  the first layer
+        rateFaster, rateSlower, stepBack, stepOn, runGame, tieNotes, cyclePlace, holdClear,
+        playAgainst, pass, liftLast, loop, waveReplay, moveRateFaster, moveRateSlower,
+
+        //  with Shift held
+        noteUp, noteDown, firstMove, lastMove, selfPlay, cycleWalk, holdRandom,
+        cyclePlayers, holdUnload, redraw, lifeLonger, lifeShorter
+    };
+
+    /** The jobs that act on a hold rather than a press: the ones that throw
+        something away, on a surface whose buttons are pressed all the time. */
+    inline constexpr bool isHoldJob (Job job) noexcept
+    {
+        return job == Job::holdClear || job == Job::holdRandom || job == Job::holdUnload;
+    }
+
+    struct EdgeButton
+    {
+        int index;
+        Job plain, shifted;
+        const char* plainLabel;         //  UTF-8, as the editor draws them
+        const char* shiftedLabel;
+    };
+
+    inline constexpr int shiftIndex = sceneIndex (7);
+
+    /** The top row left to right, then the right hand column top to bottom. */
+    inline constexpr std::array<EdgeButton, 16> edgeButtons
+    { {
+        { topIndex (0),   Job::rateFaster,     Job::noteUp,       "rate +",               "note +" },
+        { topIndex (1),   Job::rateSlower,     Job::noteDown,     "rate \xe2\x88\x92",      "note \xe2\x88\x92" },
+        { topIndex (2),   Job::stepBack,       Job::firstMove,    "step back",            "first move" },
+        { topIndex (3),   Job::stepOn,         Job::lastMove,     "step on",              "last move" },
+        { topIndex (4),   Job::runGame,        Job::selfPlay,     "run game",             "auto play" },
+        { topIndex (5),   Job::tieNotes,       Job::none,         "tie notes",            "" },
+        { topIndex (6),   Job::cyclePlace,     Job::cycleWalk,    "place",                "walk" },
+        { topIndex (7),   Job::holdClear,      Job::holdRandom,   "hold: clear",          "hold: random" },
+
+        { sceneIndex (0), Job::playAgainst,    Job::cyclePlayers, "you play",             "players" },
+        { sceneIndex (1), Job::pass,           Job::holdUnload,   "pass",                 "hold: unload" },
+        { sceneIndex (2), Job::liftLast,       Job::redraw,       "lift last",            "redraw" },
+        { sceneIndex (3), Job::loop,           Job::none,         "loop",                 "" },
+        { sceneIndex (4), Job::waveReplay,     Job::none,         "wave replay",          "" },
+        { sceneIndex (5), Job::moveRateFaster, Job::lifeLonger,   "move rate +",          "life +" },
+        { sceneIndex (6), Job::moveRateSlower, Job::lifeShorter,  "move rate \xe2\x88\x92", "life \xe2\x88\x92" },
+        { shiftIndex,     Job::shift,          Job::none,         "shift",                "" },
+    } };
+
+    /** What a press of this button does, with Shift held or not. */
+    inline constexpr Job jobFor (int index, bool shift) noexcept
+    {
+        for (const auto& button : edgeButtons)
+            if (button.index == index)
+                return shift ? button.shifted : button.plain;
+
+        return Job::none;
+    }
 }

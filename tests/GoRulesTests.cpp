@@ -6,6 +6,7 @@
 #include "GoAI.h"
 #include "GoBoard.h"
 #include "LaunchpadMap.h"
+#include "RandomPosition.h"
 #include "SgfParser.h"
 #include "ValueText.h"
 
@@ -1388,6 +1389,67 @@ namespace
     }
 
     //==============================================================================
+    //  The Random button (RandomPosition.h): a third of the board played out by
+    //  players, seed and variation nobody chose, and no opening - the one thing
+    //  that keeps two presses from starting on the same ten stones.
+
+    void testRandomPosition()
+    {
+        std::printf ("random position: a third of the board, no opening\n");
+
+        check (randompos::moveCount (8) == 21 && randompos::moveCount (9) == 27
+                 && randompos::moveCount (13) == 56 && randompos::moveCount (19) == 120,
+               "a third of the points: 21, 27, 56 and 120 moves");
+
+        const auto plain = randompos::settingsFor (9, {});
+        bool noOpening = true;
+
+        for (int move = 0; move < goai::openingLength; ++move)
+            if (goai::openingPoint (plain, move) != -1)
+                noOpening = false;
+
+        check (noOpening, "the opening asks for nothing, so the players choose from the first move");
+
+        const auto swapped = randompos::settingsFor (8, { goai::Players::reading, true, 60, 1u });
+        check (std::string (swapped.black.name) == "fighting" && std::string (swapped.white.name) == "territorial",
+               "a swapped pick gives Black the fighting style");
+        check (std::string (swapped.readingBlack.name) == goai::readingWhite (8).name
+                 && std::string (swapped.readingWhite.name) == goai::readingBlack (8).name,
+               "and the reading pair swaps too, with 8x8's own weights");
+
+        bool fullLength = true, allLegal = true, pressesDiffer = true;
+
+        for (const int size : { 8, 9, 13, 19 })
+        {
+            for (const auto players : { goai::Players::classic, goai::Players::reading })
+            {
+                const auto a = goai::generate (randompos::settingsFor (size, { players, false, 60, 7919u }));
+                const auto b = goai::generate (randompos::settingsFor (size, { players, true,  60, 104729u }));
+
+                if (a.moveCount() != randompos::moveCount (size) || b.moveCount() != randompos::moveCount (size))
+                    fullLength = false;
+
+                if (refusedMoves (a) != 0 || refusedMoves (b) != 0)
+                    allLegal = false;
+
+                //  within what would have been the book: the opening is gone
+                bool differ = false;
+
+                for (int i = 0; i < goai::openingLength; ++i)
+                    if (a.moves[(size_t) i].index != b.moves[(size_t) i].index)
+                        differ = true;
+
+                if (! differ)
+                    pressesDiffer = false;
+            }
+        }
+
+        check (fullLength, "every size and both pairs play the full third");
+        check (allLegal, "every move legal under no-suicide and ko");
+        check (pressesDiffer, "two presses differ within the first ten moves on every size");
+    }
+
+    //==============================================================================
     //  Which pad of a Launchpad X is which point of the board (LaunchpadMap.h).
     //  The device counts its rows from the bottom and the plugin counts them from
     //  the top, so the one thing worth proving is that nothing ends up flipped.
@@ -1447,6 +1509,100 @@ namespace
                "the top left pad is the top left point");
         check (lpx::boardIndexFor (81, 9) == -1 && lpx::padIndexFor (0, 19) == -1,
                "and a board the grid cannot show whole maps to nothing rather than to a lie");
+    }
+
+    //==============================================================================
+    //  What the buttons round the edge do (lpx::edgeButtons). The device, its
+    //  lights and the editor's drawing all read this one table, so this is the
+    //  check that the first layer is still the map people learned, and that the
+    //  second one does not lose or double a job.
+
+    void testEdgeButtons()
+    {
+        std::printf ("launchpad: the edge buttons and their Shift layer\n");
+
+        using lpx::Job;
+
+        bool onTheEdge = true, unique = true;
+
+        for (size_t i = 0; i < lpx::edgeButtons.size(); ++i)
+        {
+            const int index = lpx::edgeButtons[i].index;
+
+            if (! (lpx::isTop (index) || lpx::isScene (index)))
+                onTheEdge = false;
+
+            for (size_t j = i + 1; j < lpx::edgeButtons.size(); ++j)
+                if (lpx::edgeButtons[j].index == index)
+                    unique = false;
+        }
+
+        check (onTheEdge && unique, "sixteen buttons, each one on the edge and each one once");
+
+        //  the first layer as it was before Shift existed - Redraw aside, and Note,
+        //  which toggled Free Run until that went, now ties notes
+        const std::pair<int, Job> firstLayer[] =
+        {
+            { 91, Job::rateFaster }, { 92, Job::rateSlower }, { 93, Job::stepBack },   { 94, Job::stepOn },
+            { 95, Job::runGame },    { 96, Job::tieNotes },   { 97, Job::cyclePlace }, { 98, Job::holdClear },
+            { 89, Job::playAgainst }, { 79, Job::pass },      { 69, Job::liftLast },   { 59, Job::loop },
+            { 49, Job::waveReplay }, { 39, Job::moveRateFaster }, { 29, Job::moveRateSlower },
+        };
+
+        bool unchanged = true;
+
+        for (const auto& [index, job] : firstLayer)
+            if (lpx::jobFor (index, false) != job)
+                unchanged = false;
+
+        check (unchanged, "the first layer is the map it always was");
+
+        check (lpx::shiftIndex == 19 && lpx::jobFor (19, false) == Job::shift && lpx::jobFor (19, true) == Job::none,
+               "the bottom of the right hand column is Shift, with no second job of its own");
+
+        //  every job in the table, both layers, counted
+        std::array<int, 64> seen {};
+
+        for (const auto& button : lpx::edgeButtons)
+        {
+            ++seen[(size_t) button.plain];
+            ++seen[(size_t) button.shifted];
+        }
+
+        bool noneTwice = true;
+
+        for (size_t job = 1; job < seen.size(); ++job)      //  0 is Job::none
+            if (seen[job] > 1)
+                noneTwice = false;
+
+        check (noneTwice, "no job sits on two buttons");
+        check (seen[(size_t) Job::redraw] == 1 && seen[(size_t) Job::selfPlay] == 1 && seen[(size_t) Job::holdRandom] == 1,
+               "Redraw moved rather than went, and self-play and Random have a button");
+
+        check (lpx::jobFor (95, true) == Job::selfPlay, "Shift + Session turns self-play on and off");
+        check (lpx::jobFor (98, true) == Job::holdRandom && lpx::isHoldJob (Job::holdRandom),
+               "Shift + Capture MIDI is the random position, on a hold like Clear");
+        check (lpx::isHoldJob (Job::holdClear) && lpx::isHoldJob (Job::holdUnload) && ! lpx::isHoldJob (Job::selfPlay),
+               "Clear and Unload are holds too, and nothing else is");
+
+        check (lpx::jobFor (59, true) == Job::none && lpx::jobFor (49, true) == Job::none
+                 && lpx::jobFor (96, true) == Job::none,
+               "a button with no second job does nothing under Shift, not its first one");
+
+        bool labelled = true;
+
+        for (const auto& button : lpx::edgeButtons)
+        {
+            if (button.plain != Job::none && std::string (button.plainLabel).empty())
+                labelled = false;
+
+            if (button.shifted != Job::none && std::string (button.shiftedLabel).empty())
+                labelled = false;
+        }
+
+        check (labelled, "every job has a label for the drawing");
+        check (lpx::jobFor (11, false) == Job::none && lpx::jobFor (99, true) == Job::none,
+               "a pad or the logo has no job");
     }
 
     //==============================================================================
@@ -1839,7 +1995,9 @@ int main (int argc, char** argv)
     testStarPoints8();
     testCapture8();
     testAi8x8();
+    testRandomPosition();
     testPadMapping();
+    testEdgeButtons();
 
     testAiClassicUnchanged();
 

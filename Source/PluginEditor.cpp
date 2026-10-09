@@ -966,14 +966,58 @@ juce::Rectangle<int> LaunchpadDiagram::leftHalf()
     return { x, y + pitch, 4 * pitch, 8 * pitch };
 }
 
+juce::Rectangle<int> LaunchpadDiagram::shiftKey()
+{
+    //  as paint() places it: the right hand column, on the bottom row of pads
+    const int x = 1 + padding, y = labelsHeight + labelsGap + 1 + padding;
+    return { x + 8 * pitch, y + 8 * pitch, pitch, pitch };
+}
+
+void LaunchpadDiagram::setDeviceShift (bool held)
+{
+    if (held == deviceShift)
+        return;
+
+    deviceShift = held;
+    repaint();
+}
+
+bool LaunchpadDiagram::hitTest (int x, int y)
+{
+    return shiftKey().contains (x, y);
+}
+
+void LaunchpadDiagram::mouseEnter (const juce::MouseEvent&)
+{
+    hovering = true;
+    repaint();
+}
+
+void LaunchpadDiagram::mouseExit (const juce::MouseEvent&)
+{
+    hovering = false;
+    repaint();
+}
+
 void LaunchpadDiagram::paint (juce::Graphics& g)
 {
-    //  The top row left to right, then the right hand column top to bottom -
-    //  the order LaunchpadSurface::handleButton gives them their jobs in.
-    static const char* const topJobs[8]  = { "rate +", "rate \xe2\x88\x92", "step back", "step on",
-                                             "run game", "free run", "place", "hold: clear" };
-    static const char* const sideJobs[8] = { "play vs AI", "pass", "lift last", "loop",
-                                             "wave replay", "move rate +", "move rate \xe2\x88\x92", "redraw" };
+    //  The jobs come from the table the device itself reads: the top row left
+    //  to right is edgeButtons 0 to 7, the right hand column top to bottom 8 to
+    //  15. One layer at a time - the second while Shift is held, in the accent,
+    //  with the buttons that have no second job faded.
+    const bool second = showingShift();
+
+    const auto jobText = [second] (const lpx::EdgeButton& button)
+    {
+        return utf8 (second && button.index != lpx::shiftIndex ? button.shiftedLabel : button.plainLabel);
+    };
+
+    const auto unbound = [second] (const lpx::EdgeButton& button)
+    {
+        return second && button.index != lpx::shiftIndex && button.shifted == lpx::Job::none;
+    };
+
+    const auto jobColour = second ? theme::accent : theme::ink;
 
     const float sketchY = (float) (labelsHeight + labelsGap);
     const float gx = 1.0f + (float) padding, gy = sketchY + 1.0f + (float) padding;
@@ -1001,14 +1045,14 @@ void LaunchpadDiagram::paint (juce::Graphics& g)
         const float baseline = (float) labelsHeight - 2.0f;
         const auto font = theme::font (11.5f);
         g.setFont (font);
-        g.setColour (theme::ink);
+        g.setColour (jobColour);
 
         for (int i = 0; i < 8; ++i)
         {
             const float x = 17.0f + p * (float) i;
             juce::Graphics::ScopedSaveState state (g);
             g.addTransform (juce::AffineTransform::rotation (juce::degreesToRadians (-55.0f), x, baseline));
-            g.drawText (utf8 (topJobs[i]), juce::Rectangle<float> (x, baseline - 11.5f, 120.0f, 11.5f),
+            g.drawText (jobText (lpx::edgeButtons[(size_t) i]), juce::Rectangle<float> (x, baseline - 11.5f, 120.0f, 11.5f),
                         juce::Justification::centredLeft, false);
         }
     }
@@ -1018,13 +1062,20 @@ void LaunchpadDiagram::paint (juce::Graphics& g)
     g.setColour (theme::hairline);
     g.drawRoundedRectangle (body.reduced (0.5f), 9.0f, 1.0f);
 
-    //  the function buttons, outlined in the accent: the part to read
-    const auto key = [&] (juce::Rectangle<float> face, const juce::String& text, int arrowDirection)
+    //  the function buttons, outlined in the accent: the part to read. A held
+    //  Shift is filled; a button with no job on this layer is faded.
+    const auto key = [&] (juce::Rectangle<float> face, const juce::String& text, int arrowDirection,
+                          bool filled, bool faded)
     {
-        g.setColour (theme::accent.withAlpha (0.14f));
+        const float alpha = faded ? 0.3f : 1.0f;
+
+        g.setColour (theme::accent.withAlpha (filled ? 1.0f : 0.14f * alpha));
         g.fillRoundedRectangle (face, 4.0f);
-        g.setColour (theme::accent);
+        g.setColour (theme::accent.withAlpha (alpha));
         g.drawRoundedRectangle (face.reduced (0.6f), 4.0f, 1.2f);
+
+        if (filled)
+            g.setColour (theme::background);
 
         if (arrowDirection >= 0)
         {
@@ -1038,12 +1089,16 @@ void LaunchpadDiagram::paint (juce::Graphics& g)
 
     for (int i = 0; i < 8; ++i)
     {
-        key (cell (i, 0).reduced (3.0f), juce::String (i + 1), i < 4 ? i : -1);
-        key (cell (8, i + 1).reduced (3.0f), juce::String (i + 1), -1);
+        const auto& top  = lpx::edgeButtons[(size_t) i];
+        const auto& side = lpx::edgeButtons[(size_t) (8 + i)];
+
+        key (cell (i, 0).reduced (3.0f), juce::String (i + 1), i < 4 ? i : -1, false, unbound (top));
+        key (cell (8, i + 1).reduced (3.0f), juce::String (i + 1), -1,
+             second && side.index == lpx::shiftIndex, unbound (side));
     }
 
-    //  the logo, top right, which does nothing here
-    g.setColour (theme::faintText);
+    //  the logo, top right, which lights while Shift is held - on the device too
+    g.setColour (second ? theme::accent : theme::faintText);
     g.fillEllipse (juce::Rectangle<float> (9.0f, 9.0f).withCentre (cell (8, 0).getCentre()));
 
     //  the pads, faintly
@@ -1061,6 +1116,7 @@ void LaunchpadDiagram::paint (juce::Graphics& g)
 
     for (int r = 0; r < 8; ++r)
     {
+        const auto& side = lpx::edgeButtons[(size_t) (8 + r)];
         auto half = juce::Rectangle<float> (gx + 4.0f * p, gy + (float) (r + 1) * p, 4.0f * p, p).withTrimmedRight (3.0f);
 
         //  a pointer at the button in this row
@@ -1068,12 +1124,12 @@ void LaunchpadDiagram::paint (juce::Graphics& g)
         juce::Path triangle;
         triangle.addTriangle (pointer.getX(), pointer.getCentreY() - 4.0f, pointer.getRight(), pointer.getCentreY(),
                               pointer.getX(), pointer.getCentreY() + 4.0f);
-        g.setColour (theme::accent);
+        g.setColour (theme::accent.withAlpha (unbound (side) ? 0.3f : 1.0f));
         g.fillPath (triangle);
 
         half.removeFromRight (4.0f);
-        g.setColour (theme::ink);
-        g.drawFittedText (utf8 (sideJobs[r]), half.toNearestInt(), juce::Justification::centredRight, 1, 0.85f);
+        g.setColour (jobColour);
+        g.drawFittedText (jobText (side), half.toNearestInt(), juce::Justification::centredRight, 1, 0.85f);
     }
 }
 
@@ -1127,13 +1183,24 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
         board.repaint();
     });
 
+    //  cleared, then a third of the board played out at once by players drawn
+    //  at random - it ends a record, a run or a game, as Clear does not
+    setUpButton (pinned, randomButton, "Random", [this]
+    {
+        showMessage (processor.randomizePosition());
+        refreshGameDisplay();
+        board.repaint();
+    });
+    randomButton.setTitle ("random position");
+
     //  the rules decide which moves are legal, not how anything sounds - set once
     //  per piece, so they sit by the board rather than among the sound
     setUpCaption (pinned, rulesCaption, "rules");
     setUpSwitch (pinned, koButton, "Ko rule", false, "koRule", koAttachment);
     setUpSwitch (pinned, selfCaptureButton, "Self capture", false, "selfCapture", selfCaptureAttachment);
 
-    hintLabel.setText (utf8 ("click: place  \xc2\xb7  click a stone: lift  \xc2\xb7  drop an .sgf"), juce::dontSendNotification);
+    //  short, to leave Random its place at the end of the row
+    hintLabel.setText (utf8 ("click a stone: lift  \xc2\xb7  drop an .sgf"), juce::dontSendNotification);
     setUpText (pinned, hintLabel, juce::Justification::centredRight);
     hintLabel.setFont (theme::font (11.0f));
 
@@ -1148,9 +1215,14 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setUpKnob (playFace, rateKnob, rateCaption, "step rate", "rate", rateAttachment,
                choiceParser (GoSequencerProcessor::rateNames()));
     rateKnob.getProperties().set (detentProperty, true);
-    setUpKnob (playFace, tempoKnob, tempoCaption, "free tempo", "tempo", tempoAttachment,
-               parser ([] (const std::string& t) { return valuetext::number (t, { "bpm" }); }));
-    setUpSwitch (playFace, freeRunButton, "free run", true, "freeRun", freeRunAttachment);
+    //  the Standalone's own clock: a plugin has neither, and follows its host
+    if (processor.isStandalone())
+    {
+        setUpKnob (playFace, tempoKnob, tempoCaption, "tempo", "tempo", tempoAttachment,
+                   parser ([] (const std::string& t) { return valuetext::number (t, { "bpm" }); }));
+        setUpSwitch (playFace, freeRunButton, "play", true, "freeRun", freeRunAttachment);
+    }
+
     setUpText (playFace, lapLabel, juce::Justification::topLeft);
 
     //  ---- voice: pitch, length and velocity, a column each
@@ -1247,25 +1319,25 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
                  [this] { processor.nudgeGamePosition (1); refreshGameDisplay(); });
     nextMoveButton.setTitle ("next move");
 
-    //  ---- the players: self-play
+    //  ---- Shiro vs Kuro, the players: auto play
     //  The record is written rather than loaded, so Move Rate, Run and Loop
     //  drive a generated game exactly as they drive a loaded one.
-    setUpSwitch (playFace, aiPlayButton, "self-play", true, "aiPlay", aiPlayAttachment);
-    aiPlayButton.setTitle ("AI self-play");
+    setUpSwitch (playFace, aiPlayButton, "auto play", true, "aiPlay", aiPlayAttachment);
+    aiPlayButton.setTitle ("auto play");
 
-    //  ---- and playing against them
+    //  ---- and you playing them
     //  The same pair, answering a move at a time instead of writing a whole
-    //  game. It owns the board while it is on, so the processor turns self-play
+    //  game. It owns the board while it is on, so the processor turns auto play
     //  and Run Game off rather than let two things write to the same stones.
-    setUpSwitch (playFace, aiOpponentButton, "play against", true, "aiOpponent", aiOpponentAttachment);
-    aiOpponentButton.setTitle ("play against the AI");
+    setUpSwitch (playFace, aiOpponentButton, "you play", true, "aiOpponent", aiOpponentAttachment);
+    aiOpponentButton.setTitle ("you play");
 
-    //  which pair writes the games: the classic players, or the ones that read
-    //  ladders, eye shapes and areas before they choose
-    setUpCaption (playFace, playersCaption, "players");
-    playersCaption.setJustificationType (juce::Justification::centred);
-    setUpSegments (playFace, playersSwitch, { { "Classic", 0 }, { "Reading", 1 } }, "aiPlayers", playersAttachment);
-    playersSwitch.setVertical (true);
+    //  The set-up for both lives on PATCH, in a section of the same name: the
+    //  switches stay where the playing is.
+    //  Which pair writes the games: the classic players, or the ones that read
+    //  ladders, eye shapes and areas before they choose.
+    setUpCaption (patchFace, playersCaption, "players");
+    setUpSegments (patchFace, playersSwitch, { { "Classic", 0 }, { "Reading", 1 } }, "aiPlayers", playersAttachment);
     playersSwitch.setTitle ("players");
 
     setUpKnob (playFace, aiMovesKnob, aiMovesCaption, "length", "aiMoves", aiMovesAttachment,
@@ -1284,9 +1356,9 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     //  The opening. A position is not an opening - the order decides what is
     //  captured - so this takes the ten stones the board was clicked in, not
     //  the ten standing on it. Short of ten, the button says how many so far.
-    setUpCaption (playFace, openingCaption, "opening");
+    setUpCaption (patchFace, openingCaption, "opening");
 
-    setUpButton (playFace, openingFromBoardButton, "From board", [this]
+    setUpButton (patchFace, openingFromBoardButton, "From board", [this]
     {
         const auto error = processor.setOpeningFromBoard();
 
@@ -1301,7 +1373,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
                                             : "opening set: your ten moves");
     }, true);
 
-    setUpButton (playFace, openingBookButton, "Use book", [this]
+    setUpButton (patchFace, openingBookButton, "Use book", [this]
     {
         processor.useBookOpening();
         refreshOpeningDisplay();
@@ -1309,19 +1381,19 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     }, true);
 
     //  ● is the parameter's Black, ○ its White - shown black first, like the board
-    setUpCaption (playFace, opponentCaption, "they play");
-    setUpSegments (playFace, opponentSwitch, { { utf8 ("\xe2\x97\x8f"), 1 }, { utf8 ("\xe2\x97\x8b"), 0 } },
+    setUpCaption (patchFace, opponentCaption, "they play");
+    setUpSegments (patchFace, opponentSwitch, { { utf8 ("\xe2\x97\x8f"), 1 }, { utf8 ("\xe2\x97\x8b"), 0 } },
                    "aiOpponentColour", opponentAttachment);
     opponentSwitch.setTitle ("they play");
 
-    setUpButton (playFace, passButton, "Pass", [this]
+    setUpButton (patchFace, passButton, "Pass", [this]
     {
         processor.passMove();
         board.repaint();
         refreshMatchDisplay();
     }, true);
 
-    setUpButton (playFace, newMatchButton, "New game", [this]
+    setUpButton (patchFace, newMatchButton, "New game", [this]
     {
         processor.newMatch();
         board.repaint();
@@ -1364,6 +1436,11 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     addToFace (patchFace, routingTable);
     routingNoteLabel.setText ("Each voice's channel is set in OUTPUT, on the PLAY face.", juce::dontSendNotification);
     setUpText (patchFace, routingNoteLabel, juce::Justification::topLeft);
+
+    //  ---- the players' set-up, whose switches are on PLAY
+    playersNoteLabel.setText ("Auto play and you play are switched on the PLAY face. Players picks the pair "
+                              "for both; the opening is for auto play, the rest for you play.", juce::dontSendNotification);
+    setUpText (patchFace, playersNoteLabel, juce::Justification::topLeft);
     refreshPortList();
 
     //  ---- the Launchpad
@@ -1437,8 +1514,9 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     }
 
     padsNoteLabel.setText (utf8 ("Above: each top button's job, left to right. Right: each side button's job, on its own row. "
-                                 "Inside: the ports the pads use. The pads are the 8 \xc3\x97 8 board: press to place, "
-                                 "press a stone to lift it."), juce::dontSendNotification);
+                                 "Hold Shift (8) for each one's second job - or point at it here to read them. "
+                                 "The pads are the 8 \xc3\x97 8 board: press to place, press a stone to lift it."),
+                           juce::dontSendNotification);
     setUpText (patchFace, padsNoteLabel, juce::Justification::topLeft);
 
     //  the tick only follows changes, so the knobs a switch leaves idle start out faded here
@@ -2055,14 +2133,26 @@ void GoSequencerEditor::resized()
     {
         constexpr int headsHeight = 212, voiceHeight = 214;
 
-        auto heads = addSection ({ leftX, top, railWidth, headsHeight }, "PLAYHEADS", "walk" + dot + "rate" + dot + "clock", playFace);
+        const bool standalone = processor.isStandalone();
+
+        auto heads = addSection ({ leftX, top, railWidth, headsHeight }, "PLAYHEADS",
+                                 "walk" + dot + "rate" + (standalone ? dot + "clock" : juce::String()), playFace);
         modeSwitch.setBounds (heads.removeFromTop (52));
         gap (heads, 10);
 
         auto cells = threeCells (heads.removeFromTop (knobHeight));
-        placeKnob (cells[0], rateCaption, rateKnob);
-        placeKnob (cells[1], tempoCaption, tempoKnob);
-        freeRunButton.setBounds (cells[2]);
+
+        if (standalone)
+        {
+            placeKnob (cells[0], rateCaption, rateKnob);
+            placeKnob (cells[1], tempoCaption, tempoKnob);
+            freeRunButton.setBounds (cells[2]);
+        }
+        else
+        {
+            placeKnob (cells[1], rateCaption, rateKnob);    //  the host is the clock: rate is all there is
+        }
+
         gap (heads, 8);
         lapLabel.setBounds (heads);                 //  two lines: nine rings do not fit on one
 
@@ -2100,9 +2190,12 @@ void GoSequencerEditor::resized()
         outputRouteLabel.setBounds (output.removeFromTop (2 * lineHeight));     //  a port's name can be long
     }
 
-    //  ==== PATCH, left: the MIDI out port and what goes out on it ============
+    //  ==== PATCH, left: the MIDI out port and what goes out on it, then the
+    //  set-up of the players PLAY switches on ===============================
     {
-        auto out = addSection ({ leftX, top, railWidth, bottom - top }, "MIDI OUT", "where the notes go", patchFace);
+        constexpr int outHeight = 334;      //  room for the port's status line, which comes and goes
+
+        auto out = addSection ({ leftX, top, railWidth, outHeight }, "MIDI OUT", "where the notes go", patchFace);
         portCaption.setBounds (out.removeFromTop (15));
         portBox.setBounds (out.removeFromTop (26));
         gap (out, 8);
@@ -2118,6 +2211,28 @@ void GoSequencerEditor::resized()
         routingTable.setBounds (out.removeFromTop (110));
         gap (out, 6);
         routingNoteLabel.setBounds (out.removeFromTop (2 * lineHeight));
+
+        //  under the same name as the PLAY section it belongs to
+        const int setupTop = top + outHeight + sectionGap;
+        auto setup = addSection ({ leftX, setupTop, railWidth, bottom - setupTop }, "SHIRO VS KURO", "their set-up", patchFace);
+
+        auto row = setup.removeFromTop (buttonHeight);
+        playersCaption.setBounds (row.removeFromLeft (66));
+        playersSwitch.setBounds (row.removeFromLeft (168));
+        gap (setup, 10);
+
+        row = setup.removeFromTop (buttonHeight);
+        openingCaption.setBounds (row.removeFromLeft (66));
+        flow (row, { &openingFromBoardButton, &openingBookButton });
+        gap (setup, 10);
+
+        row = setup.removeFromTop (buttonHeight);
+        opponentCaption.setBounds (row.removeFromLeft (66));
+        opponentSwitch.setBounds (row.removeFromLeft (48));
+        flowRight (row, { &passButton, &newMatchButton });
+        gap (setup, 12);
+
+        playersNoteLabel.setBounds (setup.removeFromTop (3 * lineHeight));
     }
 
     //  ==== the board and its two strips, on both faces =======================
@@ -2135,6 +2250,12 @@ void GoSequencerEditor::resized()
         clearButton.setBounds (strip.removeFromRight (clear).withSizeKeepingCentre (clear, buttonHeight));
 
         auto rules = juce::Rectangle<int> (boardX, top + boardSide + 8 + 28 + 6, boardSide, 24);
+
+        //  under Clear Board and as wide, so the two read as a pair
+        const int random = juce::jmax (clear, pillWidth (randomButton));
+        randomButton.setBounds (rules.removeFromRight (random).withSizeKeepingCentre (random, buttonHeight));
+        rules.removeFromRight (12);
+
         rulesCaption.setBounds (rules.removeFromLeft (44));
         rules.removeFromLeft (14);
         koButton.setBounds (rules.removeFromLeft (switchWidth (koButton)));
@@ -2146,7 +2267,7 @@ void GoSequencerEditor::resized()
 
     //  ==== PLAY, right: the record, the players, stone life ==================
     {
-        constexpr int recordHeight = 214, playersHeight = 241;
+        constexpr int recordHeight = 214, playersHeight = 187;
 
         auto record = addSection ({ rightX, top, rightWidth, recordHeight }, "RECORD", "moves from an .sgf", playFace);
 
@@ -2185,31 +2306,20 @@ void GoSequencerEditor::resized()
         stepper.removeFromLeft (4);
         nextMoveButton.setBounds (stepper.removeFromLeft (glyphButtonWidth));
 
+        //  the two ways to play them, one at each end, over the three knobs; the
+        //  rest of their set-up is on PATCH
         const int playersTop = top + recordHeight + sectionGap;
-        auto players = addSection ({ rightX, playersTop, rightWidth, playersHeight }, "AI PLAYERS",
-                                   "self-play" + dot + "play against", playFace);
+        auto players = addSection ({ rightX, playersTop, rightWidth, playersHeight }, "SHIRO VS KURO",
+                                   "auto play" + dot + "you play", playFace);
         cells = threeCells (players.removeFromTop (knobHeight));
         aiPlayButton.setBounds (cells[0]);
-        aiOpponentButton.setBounds (cells[1]);
-        playersCaption.setBounds (cells[2].withHeight (captionHeight));
-        playersSwitch.setBounds (cells[2].getX(), cells[2].getY() + captionHeight + 7, knobWidth, 48);
+        aiOpponentButton.setBounds (cells[2]);
         gap (players, 3);
 
         cells = threeCells (players.removeFromTop (knobHeight));
         placeKnob (cells[0], aiMovesCaption, aiMovesKnob);
         placeKnob (cells[1], aiVariationCaption, aiVariationKnob);
         placeKnob (cells[2], aiSeedCaption, aiSeedKnob);
-        gap (players, 3);
-
-        auto row = players.removeFromTop (buttonHeight);
-        openingCaption.setBounds (row.removeFromLeft (66));
-        flow (row, { &openingFromBoardButton, &openingBookButton });
-        gap (players, 3);
-
-        row = players.removeFromTop (buttonHeight);
-        opponentCaption.setBounds (row.removeFromLeft (66));
-        opponentSwitch.setBounds (row.removeFromLeft (48));
-        flowRight (row, { &passButton, &newMatchButton });
 
         const int lifeTop = playersTop + playersHeight + sectionGap;
         auto life = addSection ({ rightX, lifeTop, rightWidth, bottom - lifeTop }, "STONE LIFE", "how long a stone sounds", playFace);
@@ -2219,7 +2329,7 @@ void GoSequencerEditor::resized()
         placeKnob (cells[2], waveGapCaption, waveGapKnob);
         gap (life, 8);
 
-        row = life.removeFromTop (buttonHeight);
+        auto row = life.removeFromTop (buttonHeight);
         lifeModeSwitch.setBounds (row.removeFromRight (168));
         lifeModeCaption.setBounds (row);
     }
@@ -2238,7 +2348,7 @@ void GoSequencerEditor::resized()
         padsDiagram.setBounds (pads.removeFromTop (LaunchpadDiagram::height)
                                    .withSizeKeepingCentre (LaunchpadDiagram::width, LaunchpadDiagram::height));
         gap (pads, 8);
-        padsNoteLabel.setBounds (pads.removeFromTop (5 * lineHeight));
+        padsNoteLabel.setBounds (pads.removeFromTop (6 * lineHeight));
 
         //  the two ports, over the left half of the pads
         auto half = LaunchpadDiagram::leftHalf().translated (padsDiagram.getX(), padsDiagram.getY())
@@ -2384,6 +2494,15 @@ void GoSequencerEditor::timerCallback()
 
         refreshGameDisplay();
     }
+
+    if (processor.gameMoveCount() != lastGameMovesShown)
+    {
+        lastGameMovesShown = processor.gameMoveCount();
+        refreshGameDisplay();
+    }
+
+    //  the drawing of the Launchpad shows the layer the device is showing
+    padsDiagram.setDeviceShift (processor.launchpad().shiftHeldNow());
 
     if (processor.hasCustomOpening() != lastCustomOpeningShown)
         refreshOpeningDisplay();
