@@ -173,7 +173,8 @@ game-move clock (advances the record onto the live board under a try-lock).
    along in `getStateInformation` for free; only the *reopen* needs a hook (`cpp:1653-1664`).
 3. **Derived board data** → an XML attribute in `getStateInformation` (`cpp:1494-1535`), read back
    in `setStateInformation`. Existing: `board`, `boardSizeValue`, `gamePosition`, `aiGame`,
-   `aiOpening`, `nextColour`, the embedded SGF.
+   `aiOpening`, `aiStart` / `aiStartSize` / `aiStartNext` (only while auto play runs from a
+   taken-over position), `nextColour`, the embedded SGF.
 
 `setStateInformation` injects a missing `aiPlayers` PARAM for old sessions (`cpp:1562-1567`) —
 the pattern to copy when adding a parameter that old sessions lack.
@@ -214,7 +215,9 @@ component laid out once at **1200 x 720** and scaled as a whole by `setTransform
   `TextButton`s with the `goSwitch` property: `"cell"` (knob-sized: name, 42x24 track, ON/OFF) or
   `"inline"` (track + name). A knob with nothing to do is faded with its caption by `muteKnob`
   (alpha 0.38), not drawn dim by the look-and-feel. Unused channel cells fade to 0.3 but stay
-  settable. Builders: `setUpKnob/Cell/Segments/Switch/Button/Caption/Text`.
+  settable. So does Tie notes below gate 100% (`refreshTieNotesDisplay`, followed in the tick):
+  alpha 0.38, still clickable, and the `goSwitchState` property replaces its ON / OFF word
+  with "GATE 100%" - any cell switch can say what it is waiting for that way. Builders: `setUpKnob/Cell/Segments/Switch/Button/Caption/Text`.
 - A `textFromValueFunction` set on a knob must come **after** its `SliderAttachment`, which writes
   its own (the AI length and variation readouts do this; the host keeps the parameter's text).
 - Labels from `setUpText` have `setMinimumHorizontalScale (1.0f)`: JUCE otherwise squashes text
@@ -293,6 +296,19 @@ generator, not an insert. Device-level input goes through `juce::MidiInput`, not
   how-to-use-it.md were corrected on 2026-10-09; the old wording said it did). `fireCell` uses `noteParam + head*spread` only
   (`cpp:1197`, `:1300-1303`) — every stone in a given playhead plays the same note. Board position
   decides *when* a note fires, colour decides channel and velocity.
+- **Tie notes only ties at gate ≥ 100%** (measured 2026-10-10, spiral, a run of 8 black stones,
+  `build/snap`). `fireCell` ties by lengthening a note still in `pending`; below a full gate that
+  note was flushed before the next step, so every stone retriggers. The UI fades the switch and
+  says "GATE 100%" there. While the gate's top was 100% the note was capped at a step **minus one
+  sample**, and a step landing exactly on a block start (48k/480, 48k/500) lost the tie too: the
+  previous block's `flushNoteOffs` saw `samplesLeft = blockSize - 1`. Since the gate goes to
+  200% (`maxGate`, cap `2 * step - 1`), 100% is exactly one step and ties in every block size
+  measured. Lookahead to the head's next cell would make ties gate-independent - not done.
+- **Gate range 5-200% (2026-10-10).** Same ID, so saved sessions keep their gate (APVTS stores
+  plain values), but **host automation lanes are normalised and now map to the wider range**.
+  `pending` is 64 slots, and a full pool ends the note nearest its end instead of sending a
+  note on with no slot for its note off (it used to leave that note hanging). Checked in
+  `build/snap`: nine rings, 1/32 at 300 bpm, gate 200%, blocks 64-4096 - ons and offs pair up.
 - **A fresh clone cannot configure.** `CMakeLists.txt:84` references `tools/GoAiDump.cpp` but
   `tools/` is gitignored and untracked.
 - **The ctest case points at a missing file** (`CMakeLists.txt:78`). `build.ps1` sidesteps it by
@@ -321,11 +337,39 @@ generator, not an insert. Device-level input goes through `juce::MidiInput`, not
   once therefore ages in index order: with a placement-counted life most of it is spent at once.
   `randomizePosition` restamps every stone together after publishing; `setGamePosition` (a record
   jump) still has the index-order behaviour.
+- **Auto play and you play take over the board** (issue 2, 2026-10-10). Switching either on
+  keeps the position: `startMatch` no longer clears (turn = `toMoveOnBoard()`: after a record's
+  last played move, else `nextAlternating`; they reply at once if it is theirs). Auto play
+  `captureAiStart()`s the board into `aiStart` and every game of the run is
+  `goai::generateFrom (settings, aiStart, toMove)` - the start is the record's **setup**, so
+  move 0 / Loop / Position go back to it; no opening; Length = moves played on from it.
+  `generate()` is `generateFrom` with an empty start, proven by the pinned hashes
+  (`testAiFromPosition` checks the rest). Random keeps both modes on (the run restarts from the
+  new position). Only Clear board (`clearBoardByHand`: in auto play, `aiStart.clear()` + run
+  restart, same seed) and New game (new seed + variation, empty) empty the board. Checked in
+  `build/snap` "taking over the board", incl. save/restore of a taken-over run.
 - **Every generated AI game opens on the same ten moves** (book or custom, `goai::openingPoint`).
   A short game is mostly that opening. `randompos::settingsFor` skips it without touching `GoAI.h`:
   `hasOpening = true` with every point `-1`, so `generate` hands move one to the players.
 
 ---
+
+## Locked rings (2026-10-17)
+
+`Source/RingLock.h` (JUCE-free, tested: `testRingLock`, `testAiHonoursLocks`). A locked ring is frozen and silent. The lock is
+a property of the ring's **points** (`ringlock::ringOf`), not of a playhead, so it holds in every play mode. Tengen is in no ring.
+Params `lockRing1..9` (bool, appended; old sessions lack them = off); `lockedRings()` builds the mask from them, any thread.
+
+Above the rules, `go::Board` untouched: `ringlock::allows` (point not locked, and a trial `play` on a copy loses no locked
+stone - locked stones are immune to capture). Enforced in `playMove` (new `MoveResult::locked`, last in the enum), `eraseStone`,
+`fireCell` (silent), `advanceGameLocked` / `rebuildBoardFromGameLocked` (the record plays around locked points; rebuild keeps
+their stones), `clearBoardKeepingLocksLocked` (Clear board, Random). The AI: `Settings::lockedRings`, passed to `chooseMove` /
+`scoreReadingMoves` / `chooseReadingMove` and the opening; mask 0 is identical (the six hashes are unchanged). A lock change
+re-prepares the next auto-play game (`pendingAiPrepare`); the game already playing is not cut off.
+
+UI: `BoardComponent::paintPadlocks` at `(r, r) - 0.48 spacing` on both axes; `padlockAt` is checked first in `mouseDown`.
+`cellState` bit 16 = point locked (drives the repaint), `lockMask` is read once per tick. Not done: lighting locked pads on the Launchpad.
+Harness trap: `build/snap` main()'s frame is near the 1 MB stack - new scenes go in their own function (`lockScene`).
 
 ## Work in progress: External Controller (Launchpad X)
 
@@ -357,7 +401,8 @@ Approved plan at `C:\Users\flori\.claude\plans\valiant-booping-valley.md`.
   which ends auto play / you play) and `newGame()` (match: newMatch; auto play: new random `aiSeed` + `aiVariation` 30-90 written
   to the params, run restarts at game 1; record: move 0; else clear). Clear Board - faceplate and
   Launchpad hold - goes through `clearBoardByHand()`: in a match that is `newMatch()`, so they open
-  when they play black (a bare `clearBoard()` left the match waiting on them). `handPlayed` now holds up to 1024 moves. The logo (99) lights while Shift is held - **not yet
+  when they play black (a bare `clearBoard()` left the match waiting on them); under auto play the
+  run restarts from an empty board. `handPlayed` now holds up to 1024 moves. The logo (99) lights while Shift is held - **not yet
   confirmed on hardware**.
 - Protocol note checked against Novation's manual.
 

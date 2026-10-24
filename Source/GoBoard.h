@@ -222,7 +222,9 @@ namespace go
         return n;
     }
 
-    enum class MoveResult { ok, occupied, suicide, ko, outOfRange };
+    //  locked is appended last and never returned by Board itself: it is the answer
+    //  of the layer above (RingLock.h) when a ring is locked
+    enum class MoveResult { ok, occupied, suicide, ko, outOfRange, locked };
 
     /** A chain of connected stones, plus the liberties the chain shares. */
     struct GroupScan

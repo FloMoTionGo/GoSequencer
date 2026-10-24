@@ -316,6 +316,13 @@ private:
         the notes go out. */
     void refreshOutputLines();
 
+    /** Whether the gate is at 100%, the only length Tie notes can tie at. */
+    bool gateTiesNotes() const;
+
+    /** Tie notes faded, its state reading GATE 100%, while the gate is below
+        that - the switch stays settable. */
+    void refreshTieNotesDisplay();
+
     /** The light/dark switch, top right. */
     void setDarkMode (bool dark);
 
@@ -418,6 +425,7 @@ private:
     juce::String lastHeaderShown;
     int lastModeKeyShown = -1;
     bool lastWaveReplayShown = false;
+    bool lastGateTiesShown = true;
     bool dragHighlight = false;
 
     //  a run swaps its own record in when a game ends, so the title line has to

@@ -119,8 +119,8 @@ refused and the knob keeps what it had.
 |---|---|---|
 | Under the board | **Board** | 8, 9, 13 or 19 — the board's size (8×8 is the size of a Launchpad X's grid). Changing it clears the board. |
 | | **Place** | Alt / Black / White — who a click plays next. |
-| | **Clear board** | Lifts every stone. A loaded record stays loaded. |
-| | **Random** | Clears the board and plays a third of its points out at once, by AI players, style, variation and seed drawn at random, with no fixed opening — a new position every press. Ends a loaded record, an auto play run or a game you play. |
+| | **Clear board** | Lifts every stone. A loaded record stays loaded. In a game you play it starts a new one; under auto play the run restarts from an empty board. |
+| | **Random** | Clears the board and plays a third of its points out at once, by AI players, style, variation and seed drawn at random, with no fixed opening — a new position every press. Ends a loaded record; auto play and a game you play stay on and go on from the new position. |
 | | **Rules: Ko rule** | Forbid immediately recapturing the previous position. |
 | | **Rules: Self capture** | Allow suicide moves (a group played with zero liberties is removed instead of refused). |
 | PLAY · PLAYHEADS | **Walk** | Spiral / Polyrhythm / Quads out / Quads in — see above. The line under it says how many heads walk and how long their laps are. |
@@ -128,8 +128,8 @@ refused and the knob keeps what it had.
 | | **Tempo** + **Play** | Standalone app only: its own BPM, and the switch that starts and stops it. The plugin has neither — it runs while the host plays, at the host's tempo. |
 | PLAY · VOICE | **Note** | The pitch every stone plays. |
 | | **Spread** | Semitones between one playhead and the next (multi-head modes; faded in Spiral). |
-| | **Gate** | Note length as a percentage of one step. |
-| | **Tie notes** | A run of same-coloured stones under one playhead plays as one held note, not a note per step. Off by default. |
+| | **Gate** | Note length as a percentage of one step, 5–200%: above 100% a note rings on over the next step. |
+| | **Tie notes** | A run of same-coloured stones under one playhead plays as one held note, not a note per step. Off by default. Ties only at Gate 100% or more - below that the switch is faded and reads GATE 100%. |
 | | **● black** / **○ white** | Fixed velocity per colour. |
 | PLAY · OUTPUT | **● ○ 1–9** | The MIDI channel of each voice: black and white in Spiral, one per playhead in the multi-head modes. A lamp over each cell lights as that voice plays; the cells the mode doesn't use are faded, and can still be set. |
 | PLAY · RECORD | **Load SGF…** / **Unload** | Load a game record, or let go of it — see [below](#loading-a-game-record-sgf). |
@@ -177,6 +177,9 @@ the record itself: two players take the board, game after game, with no file
 to load and nothing to connect to. It is the same machinery as an SGF
 underneath, so **Move rate**, **Run game**, **Loop**, **Position** and the step
 buttons all keep working exactly as they did. The display reads *AI game N*.
+Switched on over stones — a **Random** position, your own, a game in progress —
+they play on from that position instead of opening on an empty board; only
+**Clear board** and **New game** take the run back to empty.
 
 ![Six auto play games, one opening](docs/mockups/self-play-games.png)
 
@@ -380,7 +383,8 @@ every machine.
 ## You play
 
 Switch on **You play** in the PLAY face's SHIRO VS KURO section and the same players answer your
-moves one at a time instead of writing whole games; **They play** (● or ○, in
+moves one at a time instead of writing whole games, from the board as it stands
+(a **Random** position, say); **They play** (● or ○, in
 the PATCH face's SHIRO VS KURO section) picks their colour. Their answer lands as soon as you place a stone, and the
 display's MATCH field says whose move it is. **Pass** and **New game** (beside **They play**) do what
 they say, and two passes in a row end the game. Stones can't be lifted during

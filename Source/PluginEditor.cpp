@@ -23,6 +23,10 @@ namespace
     const juce::Identifier switchProperty { "goSwitch" };
     const juce::Identifier smallProperty  { "goSmall" };
 
+    //  what a cell switch says under its track in place of ON / OFF - set while
+    //  the switch can have no effect, to say what it is waiting for
+    const juce::Identifier switchStateProperty { "goSwitchState" };
+
     //  a dropdown drawn as a box, not on a rule: the Launchpad's, over its pads
     const juce::Identifier boxedProperty { "goBoxed" };
 
@@ -279,9 +283,12 @@ void GoLookAndFeel::drawSwitch (juce::Graphics& g, juce::Button& button, bool ce
         track = { bounds.getCentreX() - 21.0f, (float) captionHeight + 11.0f, 42.0f, 24.0f };
         inset = 3.0f;
 
+        const auto state = button.getProperties()[switchStateProperty].toString();
+
         g.setFont (stateFont());
-        g.setColour ((on ? theme::accent : theme::faintText).withMultipliedAlpha (alpha));
-        g.drawText (on ? "ON" : "OFF", juce::Rectangle<float> (0.0f, track.getBottom() + 7.0f, bounds.getWidth(), (float) valueHeight),
+        g.setColour ((on && state.isEmpty() ? theme::accent : theme::faintText).withMultipliedAlpha (alpha));
+        g.drawText (state.isNotEmpty() ? state : (on ? "ON" : "OFF"),
+                    juce::Rectangle<float> (0.0f, track.getBottom() + 7.0f, bounds.getWidth(), (float) valueHeight),
                     juce::Justification::centred, false);
     }
     else
@@ -1233,7 +1240,7 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     });
 
     //  cleared, then a third of the board played out at once by players drawn
-    //  at random - it ends a record, a run or a game, as Clear does not
+    //  at random - it ends a record; auto play and a game go on from it
     setUpButton (pinned, randomButton, "Random", [this]
     {
         showMessage (processor.randomizePosition());
@@ -1283,6 +1290,11 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     setUpKnob (playFace, gateKnob, gateCaption, "gate", "gate", gateAttachment,
                parser ([] (const std::string& t) { return valuetext::percent (t); }));
     setUpSwitch (playFace, tieNotesButton, "tie notes", true, "tieNotes", tieNotesAttachment);
+    tieNotesButton.onClick = [this]
+    {
+        if (tieNotesButton.getToggleState() && ! gateTiesNotes())
+            showMessage ("tie notes only ties at gate 100%");
+    };
     setUpKnob (playFace, blackVelocityKnob, blackVelocityCaption, utf8 ("\xe2\x97\x8f black"), "blackVelocity",
                blackVelocityAttachment, wholeParser());
     setUpKnob (playFace, whiteVelocityKnob, whiteVelocityCaption, utf8 ("\xe2\x97\x8b white"), "whiteVelocity",
@@ -1572,6 +1584,9 @@ GoSequencerEditor::GoSequencerEditor (GoSequencerProcessor& p)
     lastWaveReplayShown = processor.waveReplayOn();
     muteKnob (waveGapKnob, waveGapCaption, ! lastWaveReplayShown);
 
+    lastGateTiesShown = gateTiesNotes();
+    refreshTieNotesDisplay();
+
     lastAiShown = processor.aiSelfPlay();
     lastAiGameShown = lastAiShown ? processor.aiGameNumber() : -1;
 
@@ -1777,6 +1792,33 @@ void GoSequencerEditor::muteKnob (Knob& knob, juce::Label& caption, bool muted)
     knob.setEnabled (! muted);
     knob.setAlpha (muted ? 0.38f : 1.0f);
     caption.setAlpha (muted ? 0.38f : 1.0f);
+}
+
+bool GoSequencerEditor::gateTiesNotes() const
+{
+    //  A tie lengthens a note that is still sounding when the next step comes.
+    //  Below a full gate the note has already ended by then, so every stone is
+    //  struck again whatever the switch says. 0.995 rather than 1: the knob's
+    //  0.01 steps from 0.05 do not land on 1.0 exactly.
+    const auto* gate = processor.apvts.getRawParameterValue ("gate");
+
+    return gate == nullptr || gate->load() >= 0.995f;
+}
+
+void GoSequencerEditor::refreshTieNotesDisplay()
+{
+    //  faded but still settable, like a channel cell this mode is not using:
+    //  it is ready for when the gate goes back up to 100%
+    const bool ties = lastGateTiesShown;
+
+    tieNotesButton.setAlpha (ties ? 1.0f : 0.38f);
+
+    if (ties)
+        tieNotesButton.getProperties().remove (switchStateProperty);
+    else
+        tieNotesButton.getProperties().set (switchStateProperty, "GATE 100%");
+
+    tieNotesButton.repaint();
 }
 
 Knob& GoSequencerEditor::channelCell (int voice)
@@ -2520,6 +2562,13 @@ void GoSequencerEditor::timerCallback()
         //  does - it wraps the record without clearing the board, which is
         //  what keeps the wave running - so that switch stays live.
         muteKnob (waveGapKnob, waveGapCaption, ! waveReplay);
+    }
+
+    //  the gate can be moved from the host as well as by its knob
+    if (gateTiesNotes() != lastGateTiesShown)
+    {
+        lastGateTiesShown = gateTiesNotes();
+        refreshTieNotesDisplay();
     }
 
     //  A run replaces its own record every time a game ends, and that happens on

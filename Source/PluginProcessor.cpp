@@ -136,7 +136,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
                                                          })));
 
     layout.add (std::make_unique<AudioParameterFloat> (ParameterID { "gate", 1 }, "Gate",
-                                                       NormalisableRange<float> (0.05f, 1.0f, 0.01f), 0.5f,
+                                                       NormalisableRange<float> (0.05f, maxGate, 0.01f), 0.5f,
                                                        AudioParameterFloatAttributes()
                                                            .withStringFromValueFunction ([] (float v, int)
                                                            {
@@ -283,6 +283,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout GoSequencerProcessor::create
     //  same-colour runs then and that is how the session sounded
     layout.add (std::make_unique<AudioParameterBool> (ParameterID { "tieNotes", 1 }, "Tie Notes", false));
 
+    //  A locked ring is frozen and silent (RingLock.h). Off for a new instance,
+    //  and for a session from before locks existed, which simply lacks them.
+    for (int r = 0; r < go::maxRings; ++r)
+        layout.add (std::make_unique<AudioParameterBool> (ParameterID { "lockRing" + String (r + 1), 1 },
+                                                          "Lock Ring " + String (r + 1), false));
+
     return layout;
 }
 
@@ -327,6 +333,13 @@ GoSequencerProcessor::GoSequencerProcessor()
         headChannel[(size_t) h] = dynamic_cast<juce::AudioParameterInt*>
                                     (apvts.getParameter ("headChannel" + juce::String (h + 1)));
 
+    for (int r = 0; r < go::maxRings; ++r)
+    {
+        lockRing[(size_t) r] = dynamic_cast<juce::AudioParameterBool*>
+                                 (apvts.getParameter ("lockRing" + juce::String (r + 1)));
+        apvts.addParameterListener ("lockRing" + juce::String (r + 1), this);
+    }
+
     jassert (noteParam != nullptr && rateParam != nullptr && boardSizeParam != nullptr);
 
     for (int slot = 0; slot < go::sizeCount; ++slot)
@@ -367,6 +380,9 @@ GoSequencerProcessor::~GoSequencerProcessor()
     apvts.removeParameterListener ("aiPlayers", this);
     apvts.removeParameterListener ("aiOpponent", this);
     apvts.removeParameterListener ("aiOpponentColour", this);
+
+    for (int r = 0; r < go::maxRings; ++r)
+        apvts.removeParameterListener ("lockRing" + juce::String (r + 1), this);
     cancelPendingUpdate();
 }
 
@@ -484,6 +500,62 @@ int GoSequencerProcessor::colourChannel (int idx) const noexcept
     auto* param = white ? whiteChannel : blackChannel;
 
     return param != nullptr ? param->get() : 1;
+}
+
+ringlock::Mask GoSequencerProcessor::lockedRings() const noexcept
+{
+    ringlock::Mask mask = 0;
+
+    for (int r = 0; r < go::maxRings; ++r)
+        if (lockRing[(size_t) r] != nullptr && lockRing[(size_t) r]->get())
+            mask = (ringlock::Mask) (mask | ringlock::bit (r));
+
+    return mask;
+}
+
+bool GoSequencerProcessor::ringIsLocked (int ring) const noexcept
+{
+    return ring >= 0 && ring < go::maxRings && lockRing[(size_t) ring] != nullptr && lockRing[(size_t) ring]->get();
+}
+
+void GoSequencerProcessor::setRingLocked (int ring, bool locked)
+{
+    if (ring < 0 || ring >= go::maxRings || lockRing[(size_t) ring] == nullptr || lockRing[(size_t) ring]->get() == locked)
+        return;
+
+    lockRing[(size_t) ring]->beginChangeGesture();
+    lockRing[(size_t) ring]->setValueNotifyingHost (locked ? 1.0f : 0.0f);
+    lockRing[(size_t) ring]->endChangeGesture();
+}
+
+bool GoSequencerProcessor::pointIsLocked (int idx) const noexcept
+{
+    return ringlock::isLocked (lockedRings(), boardSize(), idx);
+}
+
+void GoSequencerProcessor::clearBoardKeepingLocksLocked()
+{
+    const auto mask = lockedRings();
+
+    if (mask == 0)
+    {
+        board.clear();
+        return;
+    }
+
+    //  a locked ring is frozen: whatever else is wiped, its stones stand
+    std::array<go::Stone, go::maxCells> kept {};
+    const int size = board.size();
+
+    for (int i = 0; i < board.cellCount(); ++i)
+        if (ringlock::isLocked (mask, size, i))
+            kept[(size_t) i] = board.at (i);
+
+    board.clear();
+
+    for (int i = 0; i < board.cellCount(); ++i)
+        if (kept[(size_t) i] != go::Stone::none)
+            board.setStone (i, kept[(size_t) i]);
 }
 
 int GoSequencerProcessor::headChannelFor (int head) const noexcept
@@ -605,7 +677,13 @@ go::MoveResult GoSequencerProcessor::playMove (int idx, go::Stone colour, bool b
 
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
-        result = board.play (idx, colour, allowSuicide, applyKo);
+
+        //  a locked ring takes no stone and loses none - the rules are asked
+        //  only about a move the lock lets through
+        if (! ringlock::allows (board, idx, colour, allowSuicide, applyKo, lockedRings()))
+            result = go::MoveResult::locked;
+        else
+            result = board.play (idx, colour, allowSuicide, applyKo);
 
         if (result == go::MoveResult::ok)
             publishBoard();
@@ -657,6 +735,9 @@ void GoSequencerProcessor::eraseStone (int idx)
     if (! eraseAllowed())
         return;             //  see eraseAllowed(): a match's position is its record
 
+    if (pointIsLocked (idx))
+        return;             //  frozen: see RingLock.h
+
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
 
@@ -683,7 +764,7 @@ void GoSequencerProcessor::clearBoard()
 {
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
-        board.clear();
+        clearBoardKeepingLocksLocked();
         publishBoard();
     }
 
@@ -698,9 +779,20 @@ void GoSequencerProcessor::clearBoard()
 void GoSequencerProcessor::clearBoardByHand()
 {
     if (matchActive())
+    {
         newMatch();
+    }
+    else if (aiSelfPlay())
+    {
+        //  a bare clear would only last until the record's next move: the run
+        //  starts over instead, from an empty board, and its own opening
+        aiStart.clear();
+        startAiSelfPlay (0);
+    }
     else
+    {
         clearBoard();
+    }
 }
 
 juce::String GoSequencerProcessor::randomizePosition()
@@ -716,25 +808,39 @@ juce::String GoSequencerProcessor::randomizePosition()
     pick.seed       = (std::uint32_t) (1 + random.nextInt (99999));
 
     const int size = boardSize();
-    const auto settings = randompos::settingsFor (size, pick);
+    auto settings = randompos::settingsFor (size, pick);
+    settings.lockedRings = lockedRings();
     const auto played = goai::generate (settings);
 
-    //  whatever owned the board gives it up first, as for a game against them:
-    //  a record or a run would otherwise go on writing over the new stones
-    releaseMatch();
-    clearGame();
+    //  A record gives the board up: it would go on writing over the new stones.
+    //  Auto play and a game against them stay on and go on from the position.
+    const bool keepRun = aiSelfPlay();
+
+    if (! keepRun)
+        clearGame();
 
     handPlayed.clear();
     go::Stone next = go::Stone::black;
 
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
-        board.clear();
+
+        //  the run's record goes, but not its switch: it is replaced from the
+        //  new position below, and until then the audio thread has no move of
+        //  the old game to play onto it
+        if (keepRun)
+        {
+            clearGameLocked();
+            gameMoveTotal.store (0, std::memory_order_relaxed);
+        }
+
+        clearBoardKeepingLocksLocked();
 
         //  under the rules the game was written with, so every move stands
         for (const auto& move : played.moves)
         {
-            if (board.play (move.index, move.colour, false, true) != go::MoveResult::ok)
+            if (! ringlock::allows (board, move.index, move.colour, false, true, lockedRings())
+                  || board.play (move.index, move.colour, false, true) != go::MoveResult::ok)
                 continue;
 
             //  kept as a sequence, as if played by hand, so Lift Last and From
@@ -772,6 +878,15 @@ juce::String GoSequencerProcessor::randomizePosition()
     matchPasses.store (0, std::memory_order_relaxed);
     matchOver.store (false, std::memory_order_relaxed);
 
+    if (keepRun)
+    {
+        captureAiStart();
+        startAiSelfPlay (0);
+    }
+
+    //  in a game against them it may now be their move
+    playOpponentReply();
+
     //  short enough for the display; the seed is left out, since no control
     //  can play a position back from it
     const bool reading = (pick.players == goai::Players::reading);
@@ -806,7 +921,7 @@ void GoSequencerProcessor::parameterChanged (const juce::String& parameterID, fl
         triggerAsyncUpdate();       //  starting a game empties the board: not here
     }
     else if (parameterID == "aiMoves" || parameterID == "aiVariation" || parameterID == "aiSeed"
-              || parameterID == "aiPlayers")
+              || parameterID == "aiPlayers" || parameterID.startsWith ("lockRing"))
     {
         //  the game playing is left alone - these are read when one is written,
         //  so the change arrives with the next game rather than cutting this one
@@ -827,9 +942,16 @@ void GoSequencerProcessor::handleAsyncUpdate()
     if (pendingAiRestart.exchange (false, std::memory_order_relaxed))
     {
         if (aiPlayParam != nullptr && aiPlayParam->get())
+        {
+            //  it takes over the board as it is - a Random position, one put
+            //  down by hand, a game in progress - and plays on from there
+            captureAiStart();
             startAiSelfPlay (0);
+        }
         else
+        {
             stopAiSelfPlay();
+        }
     }
 
     //  after the restart, so a switch on does not immediately overwrite the
@@ -1122,6 +1244,7 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
     goai::Settings settings;
 
     settings.size      = size;
+    settings.lockedRings = lockedRings();
     settings.moves     = aiMovesParam     != nullptr ? aiMovesParam->get() : 60;
     settings.variation = aiVariationParam != nullptr ? aiVariationParam->get() : 35;    // per cent, as the slider reads
 
@@ -1147,6 +1270,45 @@ goai::Settings GoSequencerProcessor::aiSettingsFor (int size, int gameNumber) co
     return settings;
 }
 
+go::Stone GoSequencerProcessor::toMoveOnBoard()
+{
+    //  a record does not keep the turn up to date as it plays, so with one on
+    //  the board its last move played says who is next; anything else - a
+    //  click, a game, Random - keeps nextAlternating, which is the turn state
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+
+        if (game.moveCount() > 0 && gameMovePosition > 0)
+            return go::other (game.moves[(size_t) juce::jmin (gameMovePosition, game.moveCount()) - 1].colour);
+    }
+
+    return (go::Stone) nextAlternating.load (std::memory_order_relaxed) == go::Stone::white ? go::Stone::white
+                                                                                         : go::Stone::black;
+}
+
+void GoSequencerProcessor::captureAiStart()
+{
+    aiStart.clear();
+    aiStart.reserve ((size_t) go::maxCells);    //  no allocating under the lock
+    aiStartToMove = toMoveOnBoard();
+
+    const juce::SpinLock::ScopedLockType sl (boardLock);
+
+    for (int i = 0; i < board.cellCount(); ++i)
+        if (board.at (i) != go::Stone::none)
+            aiStart.push_back ({ board.at (i), i, false });
+
+    aiStartSize = board.size();
+}
+
+sgf::Game GoSequencerProcessor::generateAiGame (const goai::Settings& settings) const
+{
+    if (aiStart.empty() || aiStartSize != settings.size)
+        return goai::generate (settings);
+
+    return goai::generateFrom (settings, aiStart, aiStartToMove);
+}
+
 void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
 {
     //  a run writes the whole board, so a game in progress gives it up
@@ -1155,7 +1317,9 @@ void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
     const int size = chosenBoardSize();
     const auto settings = aiSettingsFor (size, gameNumber);
 
-    auto fresh = goai::generate (settings);
+    //  move 0 of the record is the start's position, so a run that took over a
+    //  board leaves it standing and goes on from there
+    auto fresh = generateAiGame (settings);
     const int count = fresh.moveCount();
 
     {
@@ -1184,7 +1348,8 @@ void GoSequencerProcessor::startAiSelfPlay (int gameNumber)
     gamePositionMirror.store (0, std::memory_order_relaxed);
     step.store (0, std::memory_order_relaxed);
     gameCountdown = 0.0;
-    nextAlternating.store ((int) go::Stone::black, std::memory_order_relaxed);
+    const bool fromStart = ! aiStart.empty() && aiStartSize == size;
+    nextAlternating.store ((int) (fromStart ? aiStartToMove : go::Stone::black), std::memory_order_relaxed);
 
     prepareNextAiGame();
 }
@@ -1233,7 +1398,7 @@ void GoSequencerProcessor::prepareNextAiGame()
     const int number = aiGameCounter.load (std::memory_order_relaxed) + 1;
     const auto settings = aiSettingsFor (size, number);
 
-    auto next = goai::generate (settings);
+    auto next = generateAiGame (settings);
 
     {
         const juce::SpinLock::ScopedLockType sl (boardLock);
@@ -1267,7 +1432,11 @@ bool GoSequencerProcessor::yourTurn() const noexcept
 
 void GoSequencerProcessor::startMatch()
 {
-    //  a match owns the board, so whatever had it gives it up first
+    //  read while the record that made the position is still there to say it
+    const auto toMove = toMoveOnBoard();
+
+    //  a match owns the board, so whatever had it gives it up first - and
+    //  leaves its stones where they are
     releaseAiSelfPlay();
     clearGame();
 
@@ -1280,13 +1449,22 @@ void GoSequencerProcessor::startMatch()
 
     matchOn.store (true, std::memory_order_relaxed);
 
-    //  a game starts from an empty board: there is no sense in handing them a
-    //  position nobody played, and clearBoard() sets the rest of it straight
-    clearBoard();
+    //  The game goes on from the board as it stands - a Random position, one
+    //  put down by hand, where auto play or a record had got to. Only Clear
+    //  board and New game empty it. On an empty board black opens.
+    bool empty;
 
-    //  black opens, whoever black is
-    if (opponentColour() == go::Stone::black)
-        playOpponentReply();
+    {
+        const juce::SpinLock::ScopedLockType sl (boardLock);
+        empty = board.stoneCount() == 0;
+    }
+
+    nextAlternating.store ((int) (empty ? go::Stone::black : toMove), std::memory_order_relaxed);
+    matchPasses.store (0, std::memory_order_relaxed);
+    matchOver.store (false, std::memory_order_relaxed);
+
+    //  their move first, if it is theirs - it does nothing when it is yours
+    playOpponentReply();
 }
 
 void GoSequencerProcessor::releaseMatch()
@@ -1341,10 +1519,10 @@ void GoSequencerProcessor::playOpponentReply()
     const int idx = settings.players == goai::Players::reading
         ? goai::chooseReadingMove (position, colour, position.lastMove(),
                                    black ? settings.readingBlack : settings.readingWhite,
-                                   settings.variation, rng, matchWorkspace)
+                                   settings.variation, rng, matchWorkspace, settings.lockedRings)
         : goai::chooseMove (position, colour, position.lastMove(),
                             black ? settings.black : settings.white,
-                            settings.variation, rng);
+                            settings.variation, rng, settings.lockedRings);
 
     if (idx >= 0 && playMove (idx, colour, true) == go::MoveResult::ok)
         return;
@@ -1502,6 +1680,8 @@ void GoSequencerProcessor::newGame()
         setTo (aiVariationParam, randompos::minVariation
                                      + random.nextInt (randompos::maxVariation - randompos::minVariation + 1));
 
+        //  and from an empty board: a position it took over is left behind
+        aiStart.clear();
         startAiSelfPlay (0);
     }
     else if (hasGame())
@@ -1526,10 +1706,15 @@ void GoSequencerProcessor::wrapGameLocked()
 
 void GoSequencerProcessor::rebuildBoardFromGameLocked (int position)
 {
-    board.clear();
+    //  locked rings keep their stones through a rebuild, and the record plays
+    //  around them: its stones and moves on those points are skipped, as is any
+    //  move that would capture one
+    const auto locks = lockedRings();
+    clearBoardKeepingLocksLocked();
 
     for (const auto& placement : game.setup)
-        board.setStone (placement.index, placement.colour);
+        if (! ringlock::isLocked (locks, board.size(), placement.index))
+            board.setStone (placement.index, placement.colour);
 
     const int limit = juce::jlimit (0, (int) game.moves.size(), position);
 
@@ -1537,7 +1722,7 @@ void GoSequencerProcessor::rebuildBoardFromGameLocked (int position)
     {
         const auto& move = game.moves[(size_t) i];
 
-        if (! move.isPass)
+        if (! move.isPass && ringlock::allows (board, move.index, move.colour, true, false, locks))
             board.play (move.index, move.colour, true, false);
     }
 
@@ -1555,9 +1740,11 @@ bool GoSequencerProcessor::advanceGameLocked (bool refreshOccupied)
 
     if (! move.isPass)
     {
-        if (refreshOccupied && board.at (move.index) != go::Stone::none)
+        if (ringlock::isLocked (lockedRings(), board.size(), move.index))
+            ;                                       //  frozen: the record plays around it
+        else if (refreshOccupied && board.at (move.index) != go::Stone::none)
             refreshStoneLifeLocked (move.index);    //  a head replaying a point it already owns
-        else
+        else if (ringlock::allows (board, move.index, move.colour, true, false, lockedRings()))
             board.play (move.index, move.colour, true, false);   //  records are trusted: no ko test
     }
 
@@ -1666,6 +1853,13 @@ void GoSequencerProcessor::fireCell (int idx, int head, int channelIn, int semit
         return;
     }
 
+    //  a locked ring is silent, whatever walks over it
+    if (ringlock::isLocked (lockedRings(), boardSize(), idx))
+    {
+        tie = {};
+        return;
+    }
+
     //  The one gate every note passes through, for every mode and every head:
     //  outside its lifespan the stone is still on the board and still bound by
     //  the rules, but the playhead goes over it without a sound.
@@ -1680,7 +1874,8 @@ void GoSequencerProcessor::fireCell (int idx, int head, int channelIn, int semit
     const int note     = juce::jlimit (0, 127, noteParam->get() + semitoneOffset);
     const int velocity = juce::jlimit (1, 127, isBlack ? blackVelocity->get() : whiteVelocity->get());
 
-    const int gateSamples = juce::jlimit (1, juce::jmax (1, (int) samplesPerStep - 1),
+    //  past 100% a note rings on into the steps after its own
+    const int gateSamples = juce::jlimit (1, juce::jmax (1, (int) (maxGate * samplesPerStep) - 1),
                                           (int) (gateParam->get() * samplesPerStep));
 
     //  Same colour as the stone this head just sounded: rather than close that
@@ -1713,19 +1908,33 @@ void GoSequencerProcessor::fireCell (int idx, int head, int channelIn, int semit
         }
     }
 
-    midi.addEvent (juce::MidiMessage::noteOn (channel, note, (juce::uint8) velocity), offsetInBlock);
+    //  A slot before the note on, so no note goes out without its note off. With
+    //  every slot taken - long gates on many heads at a fast rate - the note
+    //  nearest its end is ended now to make room, not left hanging.
+    PendingNoteOff* slot = nullptr;
 
     for (auto& p : pending)
     {
         if (! p.active)
         {
-            p.note        = note;
-            p.channel     = channel;
-            p.samplesLeft = offsetInBlock + gateSamples;
-            p.active      = true;
+            slot = &p;
             break;
         }
+
+        if (slot == nullptr || p.samplesLeft < slot->samplesLeft)
+            slot = &p;
     }
+
+    if (slot->active)
+        midi.addEvent (juce::MidiMessage::noteOff (slot->channel, slot->note),
+                       juce::jmax (0, juce::jmin (slot->samplesLeft, offsetInBlock - 1)));
+
+    midi.addEvent (juce::MidiMessage::noteOn (channel, note, (juce::uint8) velocity), offsetInBlock);
+
+    slot->note        = note;
+    slot->channel     = channel;
+    slot->samplesLeft = offsetInBlock + gateSamples;
+    slot->active      = true;
 
     tie.colour  = stone;
     tie.note    = note;
@@ -2020,6 +2229,20 @@ void GoSequencerProcessor::getStateInformation (juce::MemoryBlock& destData)
         }
     }
 
+    //  a run that took over a position is generated from it, so it is saved
+    //  beside the seed and the game number; without it the run starts empty
+    if (aiSelfPlay() && ! aiStart.empty() && go::isSupportedSize (aiStartSize))
+    {
+        go::Board start { aiStartSize };
+
+        for (const auto& stone : aiStart)
+            start.setStone (stone.index, stone.colour);
+
+        xml->setAttribute ("aiStart", juce::String (start.toString()));
+        xml->setAttribute ("aiStartSize", aiStartSize);
+        xml->setAttribute ("aiStartNext", (int) aiStartToMove);
+    }
+
     xml->setAttribute ("nextColour", nextAlternating.load (std::memory_order_relaxed));
 
     //  whose turn it is rides in nextColour already; this is the one thing a
@@ -2138,6 +2361,31 @@ void GoSequencerProcessor::setStateInformation (const void* data, int sizeInByte
                 customOpeningCount = openingLength;
                 customOpeningSize = savedOpeningSize;
             }
+        }
+    }
+
+    //  the position the run took over, if it took one; a session from before
+    //  there was such a thing has none, and its run starts empty as it did
+    aiStart.clear();
+    aiStartSize = 0;
+    aiStartToMove = go::Stone::black;
+
+    {
+        const auto startText = xml->getStringAttribute ("aiStart");
+        const int startSize  = xml->getIntAttribute ("aiStartSize", 0);
+
+        if (startText.isNotEmpty() && go::isSupportedSize (startSize))
+        {
+            go::Board start { startSize };
+            start.fromString (startText.toStdString());
+
+            for (int i = 0; i < start.cellCount(); ++i)
+                if (start.at (i) != go::Stone::none)
+                    aiStart.push_back ({ start.at (i), i, false });
+
+            aiStartSize = startSize;
+            aiStartToMove = xml->getIntAttribute ("aiStartNext", (int) go::Stone::black) == (int) go::Stone::white
+                              ? go::Stone::white : go::Stone::black;
         }
     }
 

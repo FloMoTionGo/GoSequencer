@@ -192,7 +192,10 @@ click on it does and what the rules allow.
 - **Clear board** — lifts every stone and resets the capture counts. This does
   *not* unload a loaded record; use **Unload** in the RECORD section for that.
   In a game against the players (**you play**) it starts a new game, so they
-  open it at once if they play black.
+  open it at once if they play black. With **auto play** on, the run starts
+  again from an empty board (same seed, game 1) — a bare clear would only last
+  until the record's next move. Clear board and **New game** are the only
+  things that empty the board under you play or auto play.
 - **Random** (under Clear board) — clears the board and fills about a third
   of it at once: the AI players play 21 moves on an 8×8, 27 on a 9×9, 56 on a
   13×13 and 120 on a 19×19 in an instant. Everything else is drawn at random
@@ -205,9 +208,12 @@ click on it does and what the rules allow.
   - The stones are left as if you had placed them. They all start their
     lifespan fresh, **Lift last** takes back the last one, and **From board**
     can take the first ten as an auto play opening.
-  - Like a game against the players, it takes the board over. A loaded
-    record is unloaded, an auto play run ends, and a game you play
-    stops; each switch goes off. Your SHIRO VS KURO settings are not changed.
+  - A loaded record is unloaded. **Auto play** and **you play** stay on and
+    go on from the new position: the auto play run starts again from it
+    (game 1, move 0 is the random position), and in a game the players answer
+    at once if it is their move. Switching either on *after* Random does the
+    same — see [Auto play](#auto-play) and [You play](#you-play). Your SHIRO VS
+    KURO settings are not changed.
   - The display says what was drawn, e.g. *random position: 27 moves,
     reading players, Black fighting, variation 62%*.
 - **Rules: Ko rule** (default **on**) — forbids immediately recreating the
@@ -261,13 +267,20 @@ Three columns, each a part of how a note sounds.
 
 **Length**
 
-- **Gate** — note length as a percentage of one step (5%–100%). Short gates
-  give a plucky, staccato feel; near 100% the notes run into each other.
+- **Gate** — note length as a percentage of one step (5%–200%). Short gates
+  give a plucky, staccato feel; at 100% each note lasts until the next step.
+  Above 100% a note rings on over the next step, so notes on different
+  channels or pitches overlap - a black stone's note under the white one after
+  it in Spiral, the rings' notes into each other in the multi-head modes. The
+  same note on the same channel is still cut where the next one starts.
 - **Tie notes** (default **off**; a session saved before the switch existed
   comes back with it on) — when a playhead passes over a run of stones
   of the same colour, one after another, they play as **one held note** that
   lasts the whole run, instead of a fresh note on every step. Off, every stone
-  is struck again.
+  is struck again. **It only ties with Gate at 100% or more**: below that each
+  note has ended before the next step comes, so there is nothing to hold on to.
+  While Gate is lower the switch is faded and reads **GATE 100%** instead of
+  ON / OFF; you can still set it, ready for when the gate goes back up.
 
 **Velocity**
 
@@ -341,6 +354,15 @@ Everything in the **RECORD** section keeps working unchanged: a generated game
 *is* a record, so **Move rate**, **Run game**, **Loop**, **Position** and
 **‹** / **›** all behave exactly as they do for an `.sgf`. The record's well
 shows the two players and the game, and the display reads *AI game N*.
+
+**It takes over the board as it is.** Switched on over an empty board, the
+players open as below. Switched on over stones — a **Random** position, one you
+put down, where a record or a game you play had got to — they leave the
+position standing and play on from it, whoever is to move there. Move 0 of the
+record is that position, so **Loop**, **Position** and **‹** go back to it, and
+every game of the run starts from it. Such a game plays no opening (it has
+already started) and plays **Length** moves on from the position. Only
+**Clear board** and **New game** take the run back to an empty board.
 
 ![One run of auto play games](docs/mockups/self-play.gif)
 
@@ -445,7 +467,7 @@ PATCH face's:
 - **Players** — *Reading* or *Classic*, as above.
 - **Length** — 12 to 160 moves, the ten book moves included. 60 is the
   default: long enough for a middlegame fight, short enough that the opening
-  comes round again.
+  comes round again. From a position it took over, the moves played on from it.
 - **Variation** — how far the players stray from the best point they can see,
   0 to 100 (a percentage; the knob shows the number alone). At **0** they never
   stray, so the seed stops mattering and the run becomes one game repeating — a
@@ -606,9 +628,14 @@ The same players can answer your moves one at a time instead of writing whole
 games — on the screen, or on a [Launchpad](#11-the-launchpad-x-patch-face).
 
 - **You play** (the switch beside Auto play in the PLAY face's SHIRO VS KURO
-  section) starts a game on an empty board. A game owns the board, so Auto play
-  and **Run game** switch off and a loaded record is unloaded — and loading a
-  record or starting auto play ends the game in turn.
+  section) starts a game from the board as it stands — empty, a **Random**
+  position, stones you put down, or wherever auto play or a record had got
+  to. If it's their move there, they answer at once; on an empty board black
+  opens. A game owns the board, so Auto play and **Run game** switch off and a
+  loaded record is unloaded (its stones stay) — and loading a record or
+  starting auto play ends the game in turn, auto play playing on from the
+  game's position. **Random** during a game keeps the game going on the new
+  position.
 - **They play**, **Pass** and **New game** sit in the PATCH face's SHIRO VS
   KURO section.
 - **They play** is their colour: **○** *white* (the default — you open) or
@@ -697,6 +724,17 @@ than a single melodic line. This is the mode to reach for if you want
 long-form, slowly-shifting polyrhythmic textures.
 
 ![Polyrhythm mode: one playhead per concentric ring, tengen excluded](docs/mockups/polyrhythm-mode.png)
+
+### Locking a ring
+
+Every ring has a small padlock up and to the left of its first point, on the board's left diagonal. Click it to lock the ring. A locked ring is frozen and silent:
+
+- its playhead keeps walking, drawn hollow, but sounds nothing;
+- nothing can be placed on its points or lifted from them, by hand, from the Launchpad, from a record or from the players;
+- a stone on it cannot be captured, so a move that would take one is refused;
+- Clear board, Random and a record's jump to another move leave its stones standing.
+
+The lock belongs to the points of the ring, so it works in every mode, not only in Polyrhythm. The players know about it: auto play, Random and the opponent in a game never play on a locked ring and never take a stone from one. The nine locks are the parameters Lock Ring 1-9, so they save with the session and can be automated.
 
 ## 8. Stone lifespan in depth
 
@@ -939,8 +977,8 @@ column has no job for now and stays dark.
 
 **New game** empties the board and starts again from move 0, as the
 situation says: in a game against the players, a fresh game (they open if
-they play black); with auto play on, a new run from a fresh **seed** and
-**variation** (30–90 %), drawn at random and set on their knobs; with a record
+they play black); with auto play on, a new run on an empty board from a fresh
+**seed** and **variation** (30–90 %), drawn at random and set on their knobs; with a record
 loaded, its start again; otherwise the board is cleared.
 
 **Replay** plays the board again from move 0, and turns **Run game** on so
@@ -1011,7 +1049,8 @@ recalls the sequencer exactly as you left it, board included.
 
 An auto play run is saved differently, and more cheaply: the record itself is
 not written into the session at all. The **Players**, the **Seed**, the **Game
-length**, the **Variation**, the opening and which game of the run was playing
+length**, the **Variation**, the opening, the position the run took over (if
+it took one) and which game of the run was playing
 are — and the game is generated again from those when the session opens,
 landing on the same move with the same stones on the board. That is only sound
 because the players are exactly reproducible; see [Auto play](#auto-play).

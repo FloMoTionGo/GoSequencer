@@ -59,6 +59,7 @@
 
 #include "GoBoard.h"
 #include "GoTactics.h"
+#include "RingLock.h"
 #include "SgfParser.h"
 
 #include <algorithm>
@@ -492,6 +493,11 @@ namespace goai
 
         ReadingStyle readingBlack = readingTerritorial();
         ReadingStyle readingWhite = readingFighting();
+
+        /** Rings the players keep off (ringlock::Mask). Nothing is played on a
+            locked ring and no move takes a stone from one. Empty - the default -
+            is every game written before locks existed, exactly. */
+        ringlock::Mask lockedRings = 0;
     };
 
     /** The point the opening asks for at this move, or -1 once it is over. */
@@ -828,7 +834,8 @@ namespace goai
     /** The move this player would make, or -1 when it has nothing legal left
         that is not one of its own eyes. The board is not changed. */
     inline int chooseMove (const go::Board& board, go::Stone colour, int lastMove,
-                           const Style& style, int variation, Rng& rng)
+                           const Style& style, int variation, Rng& rng,
+                           ringlock::Mask locked = 0)
     {
         std::array<detail::Candidate, go::maxCells> scored {};
         int count = 0;
@@ -847,6 +854,10 @@ namespace goai
             go::Board trial = board;
 
             if (trial.play (idx, colour, false, true) != go::MoveResult::ok)
+                continue;
+
+            if (locked != 0 && (ringlock::isLocked (locked, board.size(), idx)
+                                  || ringlock::losesLockedStone (board, trial, locked)))
                 continue;
 
             scored[(size_t) count++] = { idx, detail::scoreMove (board, trial, idx, colour, lastMove, style) };
@@ -1101,7 +1112,8 @@ namespace goai
     /** Every point a reading player would consider, scored and read out, into
         ws.scored; returns how many. The half of chooseReadingMove before the draw. */
     inline int scoreReadingMoves (const go::Board& board, go::Stone colour, int lastMove,
-                                  const ReadingStyle& style, ReadingWorkspace& ws)
+                                  const ReadingStyle& style, ReadingWorkspace& ws,
+                                  ringlock::Mask locked = 0)
     {
         const int size = board.size(), cells = board.cellCount();
 
@@ -1127,6 +1139,11 @@ namespace goai
             const auto facts = tactics::describeMove (board, ws.analysis, idx, colour, ws.marks);
 
             if (! facts.legal)
+                continue;
+
+            //  a locked ring is off limits, and so is a move that would take a
+            //  stone from one (a copy of the board is only made when locks exist)
+            if (locked != 0 && ! ringlock::allows (board, idx, colour, false, true, locked))
                 continue;
 
             //  a single stone lifted might be the ko: the board's rules decide
@@ -1195,9 +1212,9 @@ namespace goai
         workspace is scratch and can be handed from move to move. */
     inline int chooseReadingMove (const go::Board& board, go::Stone colour, int lastMove,
                                   const ReadingStyle& style, int variation, Rng& rng,
-                                  ReadingWorkspace& ws)
+                                  ReadingWorkspace& ws, ringlock::Mask locked = 0)
     {
-        const int count = scoreReadingMoves (board, colour, lastMove, style, ws);
+        const int count = scoreReadingMoves (board, colour, lastMove, style, ws, locked);
         return detail::drawFromScored (ws.scored, count, variation, rng);
     }
 
@@ -1205,7 +1222,24 @@ namespace goai
     /** Plays a whole game out and hands it back in the shape the sequencer
         already knows how to replay. This is a message thread job: the audio
         thread only ever sees a finished record. */
+    inline sgf::Game generateFrom (const Settings& settings, const std::vector<sgf::Placement>& start,
+                                   go::Stone toMove);
+
     inline sgf::Game generate (const Settings& settings)
+    {
+        return generateFrom (settings, {}, go::Stone::black);
+    }
+
+    /** The same, played on from a position rather than from an empty board: the
+        start's stones become the record's setup, so move 0 of the record is that
+        position, and settings.moves more are played from it, toMove first.
+
+        The stones are set down, not played, so the game depends on nothing but
+        the list - which is what a saved session can bring back. A position plays
+        no opening: the opening is how a game starts, and this one has started.
+        An empty start is generate() exactly, opening and all. */
+    inline sgf::Game generateFrom (const Settings& settings, const std::vector<sgf::Placement>& start,
+                                   go::Stone toMove)
     {
         const bool reading = (settings.players == Players::reading);
 
@@ -1223,24 +1257,38 @@ namespace goai
         game.moves.reserve ((size_t) target);
 
         go::Board board { game.size };
+
+        for (const auto& stone : start)
+        {
+            if (stone.isPass || stone.colour == go::Stone::none
+                  || stone.index < 0 || stone.index >= board.cellCount() || board.at (stone.index) != go::Stone::none)
+                continue;
+
+            board.setStone (stone.index, stone.colour);
+            game.setup.push_back (stone);
+        }
+
+        const bool fromEmpty = game.setup.empty();
+
         Rng rng { settings.seed };
 
         for (int i = 0; i < 8; ++i)     // xorshift takes a moment to leave a small seed behind
             rng.next();
 
         ReadingWorkspace workspace;
-        go::Stone colour = go::Stone::black;
+        go::Stone colour = toMove == go::Stone::white ? go::Stone::white : go::Stone::black;
 
         for (int move = 0; move < target; ++move)
         {
             int played = -1;
-            const int wanted = openingPoint (settings, move);
+            const int wanted = fromEmpty ? openingPoint (settings, move) : -1;
 
             if (wanted >= 0)
             {
                 //  play() leaves the board untouched unless the move is legal,
                 //  so a refused opening point costs nothing but the fall through
-                if (board.play (wanted, colour, false, true) == go::MoveResult::ok)
+                if (ringlock::allows (board, wanted, colour, false, true, settings.lockedRings)
+                      && board.play (wanted, colour, false, true) == go::MoveResult::ok)
                     played = wanted;
             }
 
@@ -1251,10 +1299,10 @@ namespace goai
                 const int idx = reading
                     ? chooseReadingMove (board, colour, board.lastMove(),
                                          black ? settings.readingBlack : settings.readingWhite,
-                                         settings.variation, rng, workspace)
+                                         settings.variation, rng, workspace, settings.lockedRings)
                     : chooseMove (board, colour, board.lastMove(),
                                   black ? settings.black : settings.white,
-                                  settings.variation, rng);
+                                  settings.variation, rng, settings.lockedRings);
 
                 if (idx < 0)
                     break;          // nothing legal left: the game is as long as it gets

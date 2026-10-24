@@ -11,6 +11,7 @@
 #include "GoBoard.h"
 #include "LaunchpadSurface.h"
 #include "MidiPortOut.h"
+#include "RingLock.h"
 #include "SgfParser.h"
 
 //==============================================================================
@@ -116,13 +117,15 @@ public:
     /** Clear Board as the faceplate and the Launchpad mean it: in a game
         against the players an empty board is a new game, so it is one - with
         their opening move when they play black, where a bare clear would leave
-        the board waiting on a move nobody makes. */
+        the board waiting on a move nobody makes. Under auto play the run starts
+        again from an empty board, with the same seed. */
     void clearBoardByHand();
 
     /** Clears the board and plays a third of its points out at once, by players
         with a seed, a variation and styles drawn at random (RandomPosition.h).
-        It ends whatever owned the board - a record, a run of self-play, a game
-        against the players - and leaves its own parameters alone, so the
+        It ends a record. Auto play and a game against the players go on from
+        the new position instead: the run starts again from it, and they answer
+        at once if it is their move. It leaves its own parameters alone, so the
         self-play settings stay as they were set. Message thread only. Returns
         a line for the editor saying what was drawn. */
     juce::String randomizePosition();
@@ -182,6 +185,10 @@ public:
     /** The lifespan slider's top value means "hold": stones never expire. */
     static constexpr int maxStoneLife = 128;
 
+    /** The gate's top: a note may ring on through the next step and most of
+        the one after. Above 1 a note outlasts its step. */
+    static constexpr float maxGate = 2.0f;
+
     int  capturedBlack()  const noexcept { return prisonersBlack.load (std::memory_order_relaxed); }
     int  capturedWhite()  const noexcept { return prisonersWhite.load (std::memory_order_relaxed); }
     int  lastMove()       const noexcept { return lastMoveIndex.load (std::memory_order_relaxed); }
@@ -228,8 +235,9 @@ public:
 
     /** An empty board at move 0, as the situation says: in a game against the
         players a fresh one (they open if they play black); with auto play a
-        new run, from a seed and a variation drawn at random and written to
-        their knobs; with a record, its start again; else a clear. */
+        new run from an empty board, from a seed and a variation drawn at
+        random and written to their knobs; with a record, its start again;
+        else a clear. */
     void newGame();
 
     //==============================================================================
@@ -465,6 +473,18 @@ private:
         this is a lookup and not an offset from a base. */
     int headChannelFor (int head) const noexcept;
 
+public:
+    //  Locked rings (RingLock.h): frozen and silent. The mask is read from the
+    //  nine lockRingN parameters, so it is safe from any thread.
+    ringlock::Mask lockedRings() const noexcept;
+    bool ringIsLocked (int ring) const noexcept;
+    void setRingLocked (int ring, bool locked);         //  message thread; goes through the host
+    bool pointIsLocked (int idx) const noexcept;
+
+private:
+    /** board.clear() that leaves the locked rings' stones standing. Under the lock. */
+    void clearBoardKeepingLocksLocked();
+
     /** The work of processBlock, apart from the port: fills the block with the
         notes this stretch of time plays. */
     void renderBlock (juce::AudioBuffer<float>&, juce::MidiBuffer&);
@@ -509,8 +529,21 @@ private:
     goai::Settings aiSettingsFor (int size, int gameNumber) const;
 
     /** Starts a run at this game number: generates it, puts it on the board,
-        and asks for the one after it. */
+        and asks for the one after it. Every game of the run is played on from
+        aiStart - the position the board had when auto play took it over. */
     void startAiSelfPlay (int gameNumber);
+
+    /** A game of the run: goai::generate, or played on from aiStart when there
+        is one for this size. */
+    sgf::Game generateAiGame (const goai::Settings&) const;
+
+    /** Takes the board as it stands as the run's start, whoever is to move on
+        it next. An empty board is no start: the run opens as it always did. */
+    void captureAiStart();
+
+    /** Whose move it is on the board as it stands: after a record's last move
+        played, the other colour; else nextAlternating. */
+    go::Stone toMoveOnBoard();
 
     /** The switch going off: the run ends and its record is unloaded. Does
         nothing if the record on the board is not one of ours. */
@@ -537,7 +570,8 @@ private:
         first ten moves of a game can become an opening like any other ten. */
     go::MoveResult playMove (int idx, go::Stone colour, bool byHand);
 
-    /** Starts a match: takes the board off whatever had it, and empties it. */
+    /** Starts a match: takes the board off whatever had it, and goes on from
+        the position there - they answer at once if it is their move. */
     void startMatch();
 
     /** Ends the match and turns the switch off, so it tells the truth. Does
@@ -575,6 +609,14 @@ private:
     int customOpeningCount = 0;
     int customOpeningSize = 0;
 
+    //  the position auto play took over, as setup stones in board order, and
+    //  who was to move on it; empty for a run from an empty board. Saved with
+    //  the session (aiStart, aiStartSize, aiStartNext): a run comes back by
+    //  being generated again, and this is part of what it is generated from.
+    std::vector<sgf::Placement> aiStart;
+    int aiStartSize = 0;
+    go::Stone aiStartToMove = go::Stone::black;
+
     //  the game after the one playing, generated in advance so the swap at the
     //  end of a game costs the audio thread nothing
     sgf::Game aiNextGame;                          // guarded by boardLock
@@ -602,9 +644,10 @@ private:
     std::array<std::array<int, go::maxCells>, go::sizeCount> spiralTables {};
     std::array<std::array<std::array<int, go::maxCells>, go::quadCount>, go::sizeCount> quadTables {};
 
-    //  room for every ring to hold a note at once, with headroom for the
-    //  overlap when a long gate runs into the next step
-    std::array<PendingNoteOff, 32> pending {};
+    //  room for every ring to hold a note at once three times over: at a 200%
+    //  gate a ring's last two notes are still ringing when its next one starts.
+    //  Full anyway, fireCell ends the note nearest its end to make room
+    std::array<PendingNoteOff, 64> pending {};
     //  maxRings is the widest any mode gets: 9 rings beats 4 quadrants
     std::array<std::atomic<int>, go::maxRings> headPos {};
     //  one tie-tracking slot per playhead - maxHeadChannels is the widest any
@@ -650,6 +693,7 @@ private:
     //  one per playhead, assigned outright: headChannel[2] is the third head's
     //  channel whatever the others are set to
     std::array<juce::AudioParameterInt*, maxHeadChannels> headChannel {};
+    std::array<juce::AudioParameterBool*, go::maxRings> lockRing {};
 
     juce::AudioParameterBool*   gameRunParam     = nullptr;
     juce::AudioParameterBool*   gameLoopParam    = nullptr;

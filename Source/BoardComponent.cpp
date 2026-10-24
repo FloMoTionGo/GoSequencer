@@ -104,13 +104,36 @@ void BoardComponent::repaintCell (int idx)
 std::uint8_t BoardComponent::cellState (int idx) const noexcept
 {
     const auto stone = processor.stoneAt (idx);
+    const int locked = ringlock::isLocked (lockMask, size(), idx) ? 16 : 0;
 
     if (stone == go::Stone::none)
-        return 0;
+        return (std::uint8_t) locked;
 
     return (std::uint8_t) ((int) stone
                            | (processor.stoneIsSpent (idx) ? 4 : 0)
-                           | (processor.lastMove() == idx ? 8 : 0));
+                           | (processor.lastMove() == idx ? 8 : 0)
+                           | locked);
+}
+
+juce::Point<float> BoardComponent::padlockCentre (int ring) const
+{
+    const float s = spacing();
+    return pointFor (go::index (ring, ring, size())) - juce::Point<float> (s * 0.48f, s * 0.48f);
+}
+
+int BoardComponent::padlockAt (juce::Point<float> p) const
+{
+    const float s = spacing();
+
+    for (int r = 0; r < go::ringCount (size()); ++r)
+    {
+        const auto c = padlockCentre (r);
+
+        if (std::abs (p.x - c.x) <= s * 0.2f && std::abs (p.y - c.y) <= s * 0.22f)
+            return r;
+    }
+
+    return -1;
 }
 
 int BoardComponent::headCells (std::array<int, go::maxRings>& cells) const noexcept
@@ -132,6 +155,7 @@ int BoardComponent::headCells (std::array<int, go::maxRings>& cells) const noexc
 
 void BoardComponent::rememberEverything()
 {
+    lockMask = processor.lockedRings();
     drawnSize = size();
     drawnDark = theme::isDark;
     drawnRunning = processor.isRunning();
@@ -152,6 +176,8 @@ void BoardComponent::timerCallback()
         refreshAll();
         return;
     }
+
+    lockMask = processor.lockedRings();
 
     //  Stones: whatever put them there - the record, a pad, the players' answer,
     //  a stone running out of life - shows up as a point that reads differently.
@@ -237,12 +263,34 @@ void BoardComponent::mouseExit (const juce::MouseEvent&)
 
 void BoardComponent::mouseDown (const juce::MouseEvent& e)
 {
+    //  a padlock is a toggle, and wins over the point it sits beside
+    if (const int ring = padlockAt (e.position); ring >= 0)
+    {
+        processor.setRingLocked (ring, ! processor.ringIsLocked (ring));
+        lockMask = processor.lockedRings();
+        stones.repaint();
+        return;
+    }
+
     const int idx = indexFor (e.position);
 
     if (idx < 0)
         return;
 
     const bool wantsErase = e.mods.isRightButtonDown() || e.mods.isShiftDown() || e.mods.isAltDown();
+
+    if (ringlock::isLocked (lockMask, size(), idx)
+          && (wantsErase || processor.stoneAt (idx) != go::Stone::none))
+    {
+        flashIndex = idx;
+        flashAlpha = 1.0f;
+
+        if (onMessage != nullptr)
+            onMessage ("that ring is locked - click its padlock to open it");
+
+        stones.repaint();
+        return;
+    }
 
     if (wantsErase || processor.stoneAt (idx) != go::Stone::none)
     {
@@ -300,6 +348,9 @@ void BoardComponent::mouseDown (const juce::MouseEvent& e)
                 case go::MoveResult::occupied:
                     onMessage ("that point is taken");
                     break;
+                case go::MoveResult::locked:
+                    onMessage ("that move touches a locked ring - click its padlock to open it");
+                    break;
                 default:
                     break;
             }
@@ -326,6 +377,7 @@ void BoardComponent::StoneLayer::paint (juce::Graphics& g)
 {
     owner.paintStones (g);
     owner.paintPlayhead (g);
+    owner.paintPadlocks (g);
 
     if (owner.flashIndex >= 0 && owner.flashAlpha > 0.0f)
     {
@@ -418,7 +470,8 @@ void BoardComponent::paintStones (juce::Graphics& g)
     const int cells = processor.stepCount();
     const int lastMove = processor.lastMove();
 
-    if (hoverIndex >= 0 && hoverIndex < cells && processor.stoneAt (hoverIndex) == go::Stone::none)
+    if (hoverIndex >= 0 && hoverIndex < cells && processor.stoneAt (hoverIndex) == go::Stone::none
+          && ! ringlock::isLocked (lockMask, size(), hoverIndex))
         drawStone (g, pointFor (hoverIndex), radius,
                    processor.colourForNextMove() == go::Stone::black, 0.35f);
 
@@ -434,7 +487,8 @@ void BoardComponent::paintStones (juce::Graphics& g)
 
         //  a spent stone is drawn like the one under the cursor: there, but ghosted
         drawStone (g, pointFor (i), radius, stone == go::Stone::black,
-                   processor.stoneIsSpent (i) ? 0.35f : 1.0f);
+                   processor.stoneIsSpent (i) ? 0.35f
+                                              : ringlock::isLocked (lockMask, size(), i) ? 0.6f : 1.0f);
     }
 
     if (lastMove >= 0 && lastMove < cells && processor.stoneAt (lastMove) != go::Stone::none)
@@ -442,6 +496,45 @@ void BoardComponent::paintStones (juce::Graphics& g)
         const bool black = processor.stoneAt (lastMove) == go::Stone::black;
         g.setColour (black ? theme::stoneWhite : theme::stoneBlack);
         g.drawEllipse (juce::Rectangle<float> (radius * 0.7f, radius * 0.7f).withCentre (pointFor (lastMove)), 1.4f);
+    }
+}
+
+void BoardComponent::paintPadlocks (juce::Graphics& g)
+{
+    const auto clip = g.getClipBounds();
+    const float s = spacing();
+
+    for (int r = 0; r < go::ringCount (size()); ++r)
+    {
+        if (! clip.intersects (cellBounds (go::index (r, r, size()))))
+            continue;
+
+        const bool locked = ringlock::isLocked (lockMask, size(), go::index (r, r, size()));
+        const auto c = padlockCentre (r);
+
+        const float w = s * 0.26f, h = s * 0.30f;
+        const float stroke = juce::jmax (1.0f, s * 0.045f);
+        const auto body = juce::Rectangle<float> (w, h * 0.55f).withCentre ({ c.x, c.y + h * 0.225f });
+        const float legX = w * 0.3f;
+        const float top = c.y - h * 0.5f;
+
+        //  closed: the shackle runs into the body on both sides; open: its right
+        //  leg is lifted clear
+        juce::Path shackle;
+        shackle.startNewSubPath (c.x - legX, body.getY());
+        shackle.lineTo (c.x - legX, top + legX);
+        shackle.addArc (c.x - legX, top, legX * 2.0f, legX * 2.0f, -juce::MathConstants<float>::halfPi,
+                        juce::MathConstants<float>::halfPi, false);
+        shackle.lineTo (c.x + legX, locked ? body.getY() : top + legX + h * 0.08f);
+
+        const auto colour = locked ? theme::accent : theme::faintText.withAlpha (0.7f);
+        g.setColour (colour);
+        g.strokePath (shackle, juce::PathStrokeType (stroke));
+
+        if (locked)
+            g.fillRoundedRectangle (body, w * 0.18f);
+        else
+            g.drawRoundedRectangle (body.reduced (stroke * 0.5f), w * 0.18f, stroke);
     }
 }
 
@@ -458,6 +551,10 @@ void BoardComponent::paintPlayhead (juce::Graphics& g)
 
         const auto centre = pointFor (idx);
         const float s = spacing();
+
+        //  a locked ring's playhead keeps walking, but it sounds nothing: hollow
+        if (ringlock::isLocked (lockMask, size(), idx))
+            weight *= 0.35f;
 
         g.setColour (theme::accent.withAlpha ((active ? 0.95f : 0.4f) * weight));
 

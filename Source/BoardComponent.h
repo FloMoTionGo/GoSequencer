@@ -195,8 +195,14 @@ private:
     juce::Rectangle<int> cellBounds (int idx) const;
     void repaintCell (int idx);
 
-    /** What a point shows, packed: stone colour, spent, last move. */
+    /** What a point shows, packed: stone colour, spent, last move, locked. */
     std::uint8_t cellState (int idx) const noexcept;
+
+    /** The padlock of a ring sits up and to the left of the ring's first point,
+        which is on the board's left diagonal. */
+    juce::Point<float> padlockCentre (int ring) const;
+    int padlockAt (juce::Point<float> p) const;         //  the ring, or -1
+    void paintPadlocks (juce::Graphics&);
 
     /** Where the playheads are now; returns how many. */
     int headCells (std::array<int, go::maxRings>& cells) const noexcept;
@@ -220,6 +226,9 @@ private:
     int drawnSize = 0;
     bool drawnDark = false;
     go::Stone drawnHoverColour = go::Stone::none;
+
+    //  the locked rings as last read, so one tick asks the parameters once
+    ringlock::Mask lockMask = 0;
 
     int hoverIndex = -1;
     int flashIndex = -1;

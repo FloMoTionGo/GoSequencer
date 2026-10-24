@@ -7,6 +7,7 @@
 #include "GoBoard.h"
 #include "LaunchpadMap.h"
 #include "RandomPosition.h"
+#include "RingLock.h"
 #include "SgfParser.h"
 #include "ValueText.h"
 
@@ -1428,6 +1429,141 @@ namespace
     }
 
     //==============================================================================
+    //  Locked rings (RingLock.h): frozen, silent, and nothing the players or the
+    //  hand do may place on one or take a stone from one.
+
+    void testRingLock()
+    {
+        std::printf ("locked rings\n");
+
+        check (ringlock::ringOf (9, ix (0, 0)) == 0 && ringlock::ringOf (9, ix (8, 5)) == 0
+                 && ringlock::ringOf (9, ix (1, 1)) == 1 && ringlock::ringOf (9, ix (3, 4)) == 3
+                 && ringlock::ringOf (9, ix (4, 4)) == -1,
+               "ring 0 is the edge, the rings wind in, tengen belongs to none");
+        check (ringlock::ringOf (8, go::index (3, 3, 8)) == 3 && ringlock::ringOf (8, go::index (4, 4, 8)) == 3,
+               "8x8: the middle square is the innermost ring");
+
+        //  the ring's first step is its top-left corner: the left diagonal
+        bool diagonal = true;
+
+        for (int size : { 8, 9, 13, 19 })
+            for (int r = 0; r < go::ringCount (size); ++r)
+            {
+                std::array<int, go::maxCells> order {};
+                go::spiralOrder (size, order);
+                diagonal = diagonal && order[(size_t) go::ringOffset (size, r)] == go::index (r, r, size)
+                                    && ringlock::ringOf (size, go::index (r, r, size)) == r;
+            }
+
+        check (diagonal, "every size: ring r starts on (r, r)");
+
+        //  every cell of a ring is on it, and the lengths agree with go::ringLength
+        bool lengths = true;
+
+        for (int size : { 8, 9, 13, 19 })
+            for (int r = 0; r < go::ringCount (size); ++r)
+            {
+                int n = 0;
+
+                for (int i = 0; i < size * size; ++i)
+                    n += ringlock::ringOf (size, i) == r ? 1 : 0;
+
+                lengths = lengths && n == go::ringLength (size, r);
+            }
+
+        check (lengths, "each ring holds go::ringLength points");
+
+        check (! ringlock::isLocked (0, 9, ix (0, 0)), "an empty mask locks nothing");
+        check (ringlock::isLocked (ringlock::bit (1), 9, ix (1, 3)) && ! ringlock::isLocked (ringlock::bit (1), 9, ix (0, 3)),
+               "a mask locks the points of its rings only");
+
+        //  placing: a locked point refuses, an open one plays
+        go::Board board { S };
+        const auto mask = ringlock::bit (0);
+
+        check (! ringlock::allows (board, ix (0, 4), Stone::black, false, true, mask), "no stone goes on a locked point");
+        check (ringlock::allows (board, ix (1, 4), Stone::black, false, true, mask), "a stone goes on an open point");
+
+        //  capturing: white at the edge (locked), black closing it in from outside
+        board.setStone (ix (0, 4), Stone::white);
+        board.setStone (ix (0, 3), Stone::black);
+        board.setStone (ix (0, 5), Stone::black);
+
+        check (! ringlock::allows (board, ix (1, 4), Stone::black, false, true, mask),
+               "a move that would capture a locked stone is refused");
+        check (ringlock::allows (board, ix (1, 4), Stone::black, false, true, 0),
+               "and the same move is fine with nothing locked");
+
+        //  the other way round: a locked black stone in atari cannot be taken
+        go::Board b2 { S };
+        b2.setStone (ix (0, 4), Stone::black);
+        b2.setStone (ix (0, 3), Stone::white);
+        b2.setStone (ix (0, 5), Stone::white);
+        check (! ringlock::allows (b2, ix (1, 4), Stone::white, false, true, mask), "locked stones are immune to capture");
+    }
+
+    //  The players know about locks: no move on a locked ring and none that takes
+    //  one of its stones - and with nothing locked, exactly the games they always wrote.
+
+    void testAiHonoursLocks()
+    {
+        std::printf ("the players keep off locked rings\n");
+
+        for (auto players : { goai::Players::classic, goai::Players::reading })
+        {
+            goai::Settings settings;
+            settings.size = 9;
+            settings.moves = 80;
+            settings.seed = 7;
+            settings.players = players;
+
+            const auto plain = goai::generate (settings);
+            auto same = settings;
+            same.lockedRings = 0;
+            check (goai::generate (same).moves.size() == plain.moves.size()
+                     && std::equal (plain.moves.begin(), plain.moves.end(), goai::generate (same).moves.begin(),
+                                    [] (const auto& a, const auto& b) { return a.index == b.index && a.colour == b.colour; }),
+                   "no lock: the game is the one they always wrote");
+
+            auto locked = settings;
+            locked.lockedRings = (ringlock::Mask) (ringlock::bit (0) | ringlock::bit (2));
+            const auto game = goai::generate (locked);
+
+            bool clean = ! game.moves.empty();
+
+            for (const auto& move : game.moves)
+                clean = clean && ! ringlock::isLocked (locked.lockedRings, 9, move.index);
+
+            check (clean, std::string (players == goai::Players::classic ? "classic" : "reading")
+                            + ": nothing is played on rings 1 and 3");
+        }
+
+        //  a locked stone on the board survives a whole game played around it
+        goai::Settings settings;
+        settings.size = 9;
+        settings.moves = 80;
+        settings.seed = 3;
+        settings.lockedRings = ringlock::bit (0);
+
+        std::vector<sgf::Placement> start;
+        start.push_back ({ Stone::white, ix (0, 4), false });
+        start.push_back ({ Stone::black, ix (0, 3), false });
+        start.push_back ({ Stone::black, ix (0, 5), false });
+
+        const auto game = goai::generateFrom (settings, start, Stone::black);
+
+        go::Board board { S };
+
+        for (const auto& st : game.setup)
+            board.setStone (st.index, st.colour);
+
+        for (const auto& move : game.moves)
+            board.play (move.index, move.colour, false, true);
+
+        check (board.at (ix (0, 4)) == Stone::white && board.at (ix (0, 3)) == Stone::black,
+               "locked stones are still standing at the end of the game");
+    }
+
     //  The Random button (RandomPosition.h): a third of the board played out by
     //  players, seed and variation nobody chose, and no opening - the one thing
     //  that keeps two presses from starting on the same ten stones.
@@ -1717,6 +1853,70 @@ namespace
         std::printf ("self-play: and on the 8x8\n");
         check (hashGames (8, goai::Players::classic) == 0x43e4aa98u, "fifteen 8x8 games, move for move");
         check (hashGames (8, goai::Players::reading) == 0x960c294eu, "fifteen 8x8 games, tuned reading players");
+    }
+
+    //==============================================================================
+    //  Auto play taking over a position (generateFrom): the position is the
+    //  record's setup, the players go on from it, and an empty one is generate().
+
+    void testAiFromPosition()
+    {
+        std::printf ("self-play: on from a position\n");
+
+        for (auto players : { goai::Players::classic, goai::Players::reading })
+        {
+            for (int size : { 8, 9, 13, 19 })
+            {
+                const auto settings = aiSettings (size, 40, 35, goai::gameSeed (11u, 2), players);
+
+                const auto plain = goai::generate (settings);
+                const auto empty = goai::generateFrom (settings, {}, go::Stone::black);
+                bool same = plain.moves.size() == empty.moves.size() && empty.setup.empty();
+
+                for (size_t i = 0; same && i < plain.moves.size(); ++i)
+                    same = plain.moves[i].index == empty.moves[i].index && plain.moves[i].colour == empty.moves[i].colour;
+
+                check (same, "an empty start is generate(), move for move");
+
+                //  a position: the first fifteen moves of another game, white to move
+                const auto source = goai::generate (aiSettings (size, 15, 60, goai::gameSeed (5u, 1), players));
+                go::Board position { size };
+
+                for (const auto& m : source.moves)
+                    position.play (m.index, m.colour, false, true);
+
+                std::vector<sgf::Placement> start;
+
+                for (int i = 0; i < position.cellCount(); ++i)
+                    if (position.at (i) != go::Stone::none)
+                        start.push_back ({ position.at (i), i, false });
+
+                const auto game  = goai::generateFrom (settings, start, go::Stone::white);
+                const auto again = goai::generateFrom (settings, start, go::Stone::white);
+
+                check (game.setup.size() == start.size(), "the position is the record's setup");
+                check (! game.moves.empty() && game.moves.front().colour == go::Stone::white, "white, to move, plays first");
+                check ((int) game.moves.size() <= 40, "as many moves as asked for, at most");
+
+                bool alternate = true, legal = true, deterministic = game.moves.size() == again.moves.size();
+                go::Board replay { size };
+
+                for (const auto& s : game.setup)
+                    replay.setStone (s.index, s.colour);
+
+                for (size_t i = 0; i < game.moves.size(); ++i)
+                {
+                    const auto& m = game.moves[i];
+                    alternate = alternate && m.colour == (i % 2 == 0 ? go::Stone::white : go::Stone::black);
+                    legal = legal && replay.play (m.index, m.colour, false, true) == go::MoveResult::ok;
+                    deterministic = deterministic && i < again.moves.size() && again.moves[i].index == m.index;
+                }
+
+                check (alternate, "the colours alternate from there");
+                check (legal, "every move is legal on the position");
+                check (deterministic, "the same position, the same game");
+            }
+        }
     }
 
     //==============================================================================
@@ -2052,10 +2252,13 @@ int main (int argc, char** argv)
     testCapture8();
     testAi8x8();
     testRandomPosition();
+    testRingLock();
+    testAiHonoursLocks();
     testPadMapping();
     testEdgeButtons();
 
     testAiClassicUnchanged();
+    testAiFromPosition();
 
     testTacticsMoveFacts();
     testTacticsLadders();
